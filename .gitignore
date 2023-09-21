@@ -1,0 +1,10 @@
+/images
+/videos
+/yolo
+/mask-rcnn
+/ssd
+/features
+/__pycache__
+/.vscode
+/legacy
+Draft*
