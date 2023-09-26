@@ -7,11 +7,22 @@ import keyboard
 from threading import Thread
 from pupil_labs.realtime_api.simple import discover_one_device
 from pupil_labs.realtime_api.simple import Device
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.schedulers.background import BackgroundScheduler
 import serial.tools.list_ports
 import serial
 
 
-def callback(player, vlc_instance, device):
+def send_trigger_per_min(device, port, offset_ms):
+    port.write(serial_trigger.to_bytes(2, 'big'))
+    timestamp_ns = time.time_ns()
+    companion_app_time = timestamp_ns - offset_ms*1e6
+    print(device.send_event("Start of 1 min (NEON)"))
+    print(device.send_event("Start of 1 min (PC offset corrected)", event_timestamp_unix_ns=companion_app_time))
+
+
+def callback(player, vlc_instance, device, port, sched):
     print('FPS:', player.get_fps())
     print('Time(ms):', player.get_time())
     print('Frame:', .001 * player.get_time() * player.get_fps())
@@ -19,6 +30,8 @@ def callback(player, vlc_instance, device):
     player.release()
     vlc_instance.release()
     device.recording_stop_and_save()
+    port.close()
+    sched.shutdown()
 
 
 # Set up serial connection
@@ -61,14 +74,23 @@ time.sleep(3)
 # creating vlc media player object
 vlc_instance = vlc.Instance(['--video-on-top'])
 media_player = vlc_instance.media_player_new()
-media = vlc.Media("videos/blink_wgb.avi")
-# media = vlc.Media("../../../../Videos/Exp/exp_part1.avi")
+# media = vlc.Media("videos/blink_wgb.avi")
+media = vlc.Media("videos/video_test_size_120_fps_30_len_7.avi")
 media_player.set_media(media)
 media_player.set_fullscreen(True)
 
 
+# Align NEON and Biosemi at the start of each minute.
+# sched = BlockingScheduler()
+# sched.add_job(send_trigger_per_min, trigger=CronTrigger(second=00), args=[device, port, offset_ms])
+# sched.start()
+
+sched = BackgroundScheduler()
+sched.add_job(send_trigger_per_min, trigger='interval', seconds=60, args=[device, port, offset_ms])  # Example: Run every 60 seconds
+
+
 # Quit when Esc is pressed
-keyboard.add_hotkey("Esc", callback, args=[media_player, vlc_instance, device])
+keyboard.add_hotkey("Esc", callback, args=[media_player, vlc_instance, device, port, sched])
 
 
 # start playing video
@@ -78,9 +100,11 @@ media_player.play()
 port.write(serial_trigger.to_bytes(1, 'big'))
 timestamp_port = time.time_ns()
 print(device.send_event("Play (after execution)", event_timestamp_unix_ns=(timestamp_port - offset_ms*1e6)))
+sched.start()
 while True:
     if media_player.get_state() == vlc.State.Ended:
+        port.write(serial_trigger.to_bytes(1, 'big'))
         timestamp_end = time.time_ns()
         print(device.send_event("End of video", event_timestamp_unix_ns=(timestamp_end - offset_ms*1e6)))
-        callback(media_player, vlc_instance, device)
+        callback(media_player, vlc_instance, device, port, sched)
         break

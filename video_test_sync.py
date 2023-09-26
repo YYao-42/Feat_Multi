@@ -23,18 +23,16 @@ def add_markers(frame, markers):
     return frame
 
 # Add the QR code at given position
-def add_QR_code(frame, QR_code_path, start_x, start_y, size=100):
+def add_QR_code(frame, QR_code_path, start_x, start_y):
     QR_code = cv.imread(QR_code_path)
-    QR_code = cv.resize(QR_code, (size, size))
     end_x = start_x + QR_code.shape[1]
     end_y = start_y + QR_code.shape[0]
     frame[start_y:end_y, start_x:end_x, :] = QR_code
     return frame
 
 # Add an image in the center of a frame
-def add_QR_code_center(frame, QR_code_path, size=100):
+def add_QR_code_center(frame, QR_code_path):
     QR_code = cv.imread(QR_code_path)
-    QR_code = cv.resize(QR_code, (size, size))
     start_x = (frame.shape[1] - QR_code.shape[1]) // 2
     end_x = (frame.shape[1] + QR_code.shape[1]) // 2
     if (end_x - start_x) != QR_code.shape[1]:
@@ -77,8 +75,8 @@ def generate_test_video(video_path, fps, len_min, marker_size=100):
         second = i // fps - minute*60  # get the second
         frame = np.zeros((480, 854, 3), dtype=np.uint8)
         if second >= 30:
-            xrange = (100, 600)
-            yrange = (100, 200)
+            xrange = (150, 400)
+            yrange = (0, 180)
             vxrange = (-10, 10)
             vyrange = (-5, 5)
             if minute == 0:
@@ -98,11 +96,13 @@ def generate_test_video(video_path, fps, len_min, marker_size=100):
                 if second % 2 == 0:
                     vx_rand, vy_rand = random_pos_or_velo(vxrange, vyrange)
                 start_x, start_y = coordinates_next_frame(start_x_init, start_y_init, vx_rand, vy_rand, xrange, yrange)
+            elif minute == 6:
+                start_x, start_y = coordinates_next_frame(start_x_init, start_y_init, 0, 0, xrange, yrange)
             else:
                 raise ValueError('video too long')
             start_x_init = start_x
             start_y_init = start_y
-            frame = add_QR_code(frame, 'images/qrcode_yyy.png', start_x, start_y)
+            frame = add_QR_code(frame, 'images/qrcode_email.png', start_x, start_y)
             frame[200:300, -100:, :] = 255
         frame = add_markers(frame, markers)
         writer.write(frame)
@@ -110,8 +110,8 @@ def generate_test_video(video_path, fps, len_min, marker_size=100):
 
 
 if __name__ == '__main__':
-    marker_size = 100
+    marker_size = 120
     fps = 30
-    len_min = 6
+    len_min = 7
     video_test_path = 'videos/video_test_size_' + str(marker_size) + '_fps_' + str(fps) + '_len_' + str(len_min) + '.avi'
     generate_test_video(video_test_path, fps, len_min, marker_size)
