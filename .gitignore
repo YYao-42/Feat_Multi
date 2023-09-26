@@ -1,10 +1,9 @@
 /images
 /videos
-/yolo
-/mask-rcnn
-/ssd
+/data
 /features
 /__pycache__
 /.vscode
 /legacy
 Draft*
+*.npy
