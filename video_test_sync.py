@@ -1,3 +1,19 @@
+'''
+This script is used to create a video for testing the synchronization between EEG, NEON and PC.
+Video content:
+    - 4 markers in the four corners of the frame (always present) -> for gaze mapping
+    - a white box (present in the second half of each minute) -> signal to photodiode
+    - a QR code (present in the second half of each minute) that either
+        - stays static
+        - moves in a constant velocity
+        - moves in a random velocity
+        - occurs randomly
+We then analyze the scene camera video and align the timestamps of the QR code with the timestamps of the photodiode signal.
+Markers and the QR code need to be big enough to be robustly detected. 
+        
+Author: yuanyuan.yao@kuleuven.be
+'''
+
 import cv2 as cv
 import numpy as np
 import os

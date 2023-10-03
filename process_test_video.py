@@ -1,3 +1,12 @@
+'''
+This script is used to process the scene camera video. More specifically, it detects the QR code in the video and then visualizes and save the detection results.
+Two detection methods are implemented: one is based on OpenCV, the other is based on pyzbar.
+    - OpenCV: returns more 'True's, but for many of which the bounding box is not accurate and the QR code info is not interpretable. 
+    - pyzbar (recommended): returns less 'True's, but for all of which the bounding box is accurate and the QR code info is interpretable. In other words, the results are cleaner. 
+        
+Author: yuanyuan.yao@kuleuven.be
+'''
+
 import cv2 as cv
 import numpy as np
 from pyzbar.pyzbar import decode
@@ -17,13 +26,24 @@ def detect_QR_code(frame):
         return frame, ifdetected
     if points is not None:
         ifdetected = True
-        for code_info, code_points in zip(decoded_info, points):
-            if code_info:
-                print("QR Code Data:", code_info)
+        if decoded_info != '':
+        # WARNING (if exist multiple QR codes): decoded_info is a string, points is a list of numpy arrays.
+            for code_info, code_points in zip(decoded_info, points):
                 # Draw bounding box around the QR code
                 for point in code_points:
                     point = point.astype(int)
                     cv.circle(frame, tuple(point), 5, (0, 0, 255), -1)
+                # show the QR code info
+                cv.putText(frame, code_info, (int(code_points[0][0]), int(code_points[0][1] - 10)),
+                        cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        else:
+            text = "Unable to decode info!"
+            for code_points in points:
+                for point in code_points:
+                    point = point.astype(int)
+                    cv.circle(frame, tuple(point), 5, (0, 0, 255), -1)
+                cv.putText(frame, text, (int(code_points[0][0]), int(code_points[0][1] - 10)),
+                        cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     return frame, ifdetected
 
 
@@ -40,11 +60,13 @@ def detect_QR_code_pyzbar(frame):
         for QR_code in QR_detector:
             code_info = QR_code.data.decode('utf-8')
             code_points = QR_code.polygon
-            print("QR Code Info:", code_info)
             # Draw bounding box around the QR code
             for p in code_points:
                 point = (p.x, p.y)
                 cv.circle(frame, tuple(point), 5, (0, 0, 255), -1)
+            # show the QR code info
+            cv.putText(frame, code_info, (int(code_points[0].x), int(code_points[0].y - 10)),
+                        cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     return frame, ifdetected
 
 
@@ -76,7 +98,7 @@ def visual_QR_codes(visual_video_path, test_video_path, fps, width, height):
         ret, frame = cap.read()
         if ret:
             # Detect QR code
-            frame, ifdetected = detect_QR_code(frame)
+            frame, ifdetected = detect_QR_code_pyzbar(frame)
             QR_detected.append(ifdetected)
             # Display the resulting frame
             writer.write(frame)
@@ -88,7 +110,7 @@ def visual_QR_codes(visual_video_path, test_video_path, fps, width, height):
             break
     # save the QR detection results
     QR_detected = np.array(QR_detected)
-    np.save('QR_detected.npy', QR_detected)
+    np.save('QR_detected_pyzbar.npy', QR_detected)
     writer.release()
     cap.release()
 
@@ -97,12 +119,12 @@ def visual_QR_codes(visual_video_path, test_video_path, fps, width, height):
 # main function
 if __name__ == "__main__":
     test_video_path = "videos/test_2.mp4"
-    visual_video_path = "videos/visual_2.avi"
+    visual_video_path = "videos/visual_pyzbar_2.avi"
     width, height, fps = get_frame_size_and_fps(test_video_path)
     visual_QR_codes(visual_video_path, test_video_path, fps, width, height)
     # detect whether a QR code is in the image
     # frame = cv.imread('images/qrcode_email.png')
-    # frame = detect_QR_code(frame)
+    # frame, _ = detect_QR_code(frame)
     # cv.imshow('frame', frame)
     # cv.waitKey(0)
     # cv.destroyAllWindows()

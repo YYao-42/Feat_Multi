@@ -1,3 +1,12 @@
+'''
+This script is used to present the video stimuli and send triggers to EEG recorder and NEON (as a backup synchronization method).
+The video stimuli are presented in a full screen mode.
+The trigger to the EEG recorder is sent via a serial port, and the event to NEON is sent via NEON's real-time API.
+The trigger and event are scheduled to be sent once per minute.
+        
+Author: yuanyuan.yao@kuleuven.be
+'''
+
 import nest_asyncio
 import socket
 import time
