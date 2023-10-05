@@ -1,6 +1,19 @@
+'''
+This script is used to generate multi-object videos.
+It has three steps:
+    - divide videos into pairs and stitch two videos in each pair side by side
+        - video 1 can initially be on the left, right, top or bottom of video 2 (randomly selected)
+        - the position of video 1 and video 2 changes every 30 seconds (randomly selected)
+    - prepend content (QR code and instructions) to the stitched video and make sure the video length is a multiple of 1 minute
+    - concatenate the prepended videos
+        
+Author: yuanyuan.yao@kuleuven.be
+'''
+
 import numpy as np
 import cv2 as cv
 import os
+from vputils import add_QR_code, add_progress_bar, addText, get_frame_size_and_fps
 
 
 def select_pattern(pattern_list, canvas_height, canvas_width):
@@ -64,62 +77,172 @@ def generate_video_pairs(dir_parent):
     return video_pairs
 
 
-dir_parent = '../Feature extraction/videos/ori_video/'
-video_pairs = generate_video_pairs(dir_parent)
+def stitch_two_videos_side_by_side(dir_parent, dir_output, pair, canvas_height, canvas_width):
+        print('Currently stitching video pair: ', pair)
+        generate_pattern = []
+        # load the videos
+        video_1_ID = pair[0][:2]
+        video_2_ID = pair[1][:2]
+        cap1 = cv.VideoCapture(dir_parent + pair[0])
+        cap2 = cv.VideoCapture(dir_parent + pair[1])
+        if not cap1.isOpened() or not cap2.isOpened():
+            print("Cannot open file")
+            exit()
+        # get the frame rate of the videos
+        fps1 = round(cap1.get(cv.CAP_PROP_FPS))
+        fps2 = round(cap2.get(cv.CAP_PROP_FPS))
+        assert fps1 == fps2, 'The frame rate of the two videos are not the same!'
+        # create an output video writer (avi)
+        fourcc = cv.VideoWriter_fourcc(*'XVID')
+        output_path = dir_output + video_1_ID + '_' + video_2_ID + '.avi'
+        out = cv.VideoWriter(output_path, fourcc, fps1, (canvas_width, canvas_height))
+        pattern_list = ['v1_l', 'v1_r', 'v1_u', 'v1_d']
+        frame_count = 0
+        while True:
+            canvas = np.zeros((canvas_height, canvas_width, 3), dtype=np.uint8)
+            # create a white box on the top right corner
+            canvas[:120, -120:, :] = 255
+            # Read frames from the two videos
+            ret1, frame1 = cap1.read()
+            ret2, frame2 = cap2.read()
+            # Break the loop when either of the videos ends
+            if not ret1 or not ret2:
+                break
+            # resize the frame
+            frame1 = resize_frame(frame1, canvas_height, canvas_width)
+            frame2 = resize_frame(frame2, canvas_height, canvas_width)
+            # change a pattern per 30 seconds
+            if frame_count % (fps1*30) == 0:
+                pattern_list, v1_pos, v2_pos, pattern = select_pattern(pattern_list, canvas_height, canvas_width)
+                generate_pattern.append(pattern)
+            # place the two videos on the canvas
+            canvas[v1_pos[1]:v1_pos[1] + frame1.shape[0], v1_pos[0]:v1_pos[0] + frame1.shape[1], :] = frame1
+            canvas[v2_pos[1]:v2_pos[1] + frame2.shape[0], v2_pos[0]:v2_pos[0] + frame2.shape[1], :] = frame2
+            frame_count += 1
+            out.write(canvas)
+        # save the generated pattern
+        pattern_path = dir_output + video_1_ID + '_' + video_2_ID + '_pattern.txt'
+        with open(pattern_path, 'w') as f:
+            for pattern in generate_pattern:
+                f.write("%s\n" % pattern)
+        cap1.release()
+        cap2.release()
+        out.release()
+
+
+def get_nb_prepend_frames(nb_vid_frames, fs):
+    min = nb_vid_frames // (fs * 60)
+    sec = (nb_vid_frames % (fs * 60)) // fs
+    if sec < 30:
+        target_video_len = (60 * fs) * (min + 1)
+    else:
+        target_video_len = (60 * fs) * (min + 2)
+    nb_frames_left = target_video_len - nb_vid_frames
+    return nb_frames_left
+
+
+def add_prepended_content(MODE, stitched_output, video_name, prepend_output, descrip_dict):
+    print('Currently prepending content to video: ', video_name)
+    video_pair_path = stitched_output + video_name
+    pair_ID = video_name[:-4].split('_')
+    video_ID_attend = pair_ID[0] if MODE == 0 else pair_ID[1]
+    # get the description of the attended video
+    video_descrip_attend = descrip_dict[video_ID_attend]
+    cap = cv.VideoCapture(video_pair_path)
+    fps = round(cap.get(cv.CAP_PROP_FPS))
+    nb_frame = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+    frame_width = int(cap.get(cv.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))
+    nb_frames_left = get_nb_prepend_frames(nb_frame, fps)
+    # write video
+    fourcc = cv.VideoWriter_fourcc(*'XVID')
+    output_path = prepend_output + video_name[:-4] + '_MODE_' + str(MODE) + '.avi'
+    out = cv.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+    for append_frame_id in range(nb_frames_left):
+        frame = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
+        progress = (append_frame_id + 1) / nb_frames_left
+        add_progress_bar(frame, progress)
+        sec = append_frame_id // fps
+        if sec < 5:
+            addText(frame, 'Please stay still for a moment', (192, 500))
+        else:
+            add_QR_code(frame, 'images/qrcode.png', 100, 100)
+            addText(frame, 'Next Task: ', (950, 200), fontScale=2, thickness=3)
+            addText(frame, 'Please focus on', (950, 400), fontScale=1.5, thickness=2)
+            addText(frame, video_descrip_attend, (950, 500), fontScale=1.5, thickness=2)
+        out.write(frame)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        out.write(frame)
+    cap.release()
+    out.release()
+
+
+def concat_videos(MODE, prepend_dir, concat_dir):
+    video_to_concat = [video for video in os.listdir(prepend_dir) if video.endswith('_MODE_' + str(MODE) + '.avi')]
+    video_to_concat.sort()
+    video_to_concat = [prepend_dir + video for video in video_to_concat]
+    frame_width, frame_height, fps = get_frame_size_and_fps(video_to_concat[0])
+    # initialize writer
+    fourcc = cv.VideoWriter_fourcc(*'XVID')
+    output_path = concat_dir + 'MODE_' + str(MODE) + '.avi'
+    out = cv.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+    for video in video_to_concat:
+        cap = cv.VideoCapture(video)
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            out.write(frame)
+        cap.release()
+    out.release()
+
+
 canvas_height = 1080
 canvas_width = 1920
+STITCHED = True
+PREPENDED = True
+CONCATENATED = True
+video_dict = {'01': 'the dancer in a white shirt', '05': 'the dancer in a black shirt',
+              '12': 'the magician with a silk scarf', '02': 'the mime actor with a hat',
+              '03': 'the acrobat actress on a unicycle', '08': 'the sitting magician',
+              '06': 'the mime actor with a briefcase', '04': 'the sitting magician',
+              '09': 'the dancer', '07': 'the acrobat actor',
+              '13': 'the dancer in a blue shirt', '15': 'the dancer in a red shirt',
+              '16': 'the mime arctor with a hat', '14': 'the sitting mime artress'}
 # if a output directory does not exist, create one
-dir_output = 'videos/pairs/'
-if not os.path.exists(dir_output):
-    os.makedirs(dir_output)
-for pair in video_pairs:
-    print('Currently processing video pair: ', pair)
-    generate_pattern = []
-    # load the videos
-    video_1_ID = pair[0][:2]
-    video_2_ID = pair[1][:2]
-    cap1 = cv.VideoCapture(dir_parent + pair[0])
-    cap2 = cv.VideoCapture(dir_parent + pair[1])
-    if not cap1.isOpened() or not cap2.isOpened():
-        print("Cannot open file")
-        exit()
-    # get the frame rate of the videos
-    fps1 = round(cap1.get(cv.CAP_PROP_FPS))
-    fps2 = round(cap2.get(cv.CAP_PROP_FPS))
-    assert fps1 == fps2, 'The frame rate of the two videos are not the same!'
-    # create an output video writer (avi)
-    fourcc = cv.VideoWriter_fourcc(*'XVID')
-    output_path = dir_output + video_1_ID + '_' + video_2_ID + '.avi'
-    out = cv.VideoWriter(output_path, fourcc, fps1, (canvas_width, canvas_height))
-    pattern_list = ['v1_l', 'v1_r', 'v1_u', 'v1_d']
-    frame_count = 0
-    while True:
-        canvas = np.zeros((canvas_height, canvas_width, 3), dtype=np.uint8)
-        # create a white box on the top right corner
-        canvas[:120, -120:, :] = 255
-        # Read frames from the two videos
-        ret1, frame1 = cap1.read()
-        ret2, frame2 = cap2.read()
-        # Break the loop when either of the videos ends
-        if not ret1 or not ret2:
-            break
-        # resize the frame
-        frame1 = resize_frame(frame1, canvas_height, canvas_width)
-        frame2 = resize_frame(frame2, canvas_height, canvas_width)
-        # change a pattern per 30 seconds
-        if frame_count % (fps1*30) == 0:
-            pattern_list, v1_pos, v2_pos, pattern = select_pattern(pattern_list, canvas_height, canvas_width)
-            generate_pattern.append(pattern)
-        # place the two videos on the canvas
-        canvas[v1_pos[1]:v1_pos[1] + frame1.shape[0], v1_pos[0]:v1_pos[0] + frame1.shape[1], :] = frame1
-        canvas[v2_pos[1]:v2_pos[1] + frame2.shape[0], v2_pos[0]:v2_pos[0] + frame2.shape[1], :] = frame2
-        frame_count += 1
-        out.write(canvas)
-    # save the generated pattern
-    pattern_path = dir_output + video_1_ID + '_' + video_2_ID + '_pattern.txt'
-    with open(pattern_path, 'w') as f:
-        for pattern in generate_pattern:
-            f.write("%s\n" % pattern)
-    cap1.release()
-    cap2.release()
-    out.release()
+stitched_output = 'videos/pairs/'
+if not os.path.exists(stitched_output):
+    os.makedirs(stitched_output)
+prepend_output = 'videos/prepend/'
+if not os.path.exists(prepend_output):
+    os.makedirs(prepend_output)
+concat_output = 'videos/concat/'
+if not os.path.exists(concat_output):
+    os.makedirs(concat_output)
+
+if not STITCHED:
+    dir_parent = '../Feature extraction/videos/ori_video/'
+    video_pairs = generate_video_pairs(dir_parent)
+    for pair in video_pairs:
+        stitch_two_videos_side_by_side(dir_parent, stitched_output, pair, canvas_height, canvas_width)
+stitched_video_list = [video for video in os.listdir(stitched_output) if video.endswith('.avi')]
+
+if not PREPENDED:
+    MODE = 0
+    for stitched_pair in stitched_video_list:
+        add_prepended_content(MODE, stitched_output, stitched_pair, prepend_output, video_dict)
+    MODE = 1
+    for stitched_pair in stitched_video_list:
+        add_prepended_content(MODE, stitched_output, stitched_pair, prepend_output, video_dict)
+
+if not CONCATENATED:
+    MODE = 0
+    concat_videos(MODE, prepend_output, concat_output)
+    MODE = 1
+    concat_videos(MODE, prepend_output, concat_output)
+
+if STITCHED and PREPENDED and CONCATENATED:
+    print('You are all set!')
