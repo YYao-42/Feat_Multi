@@ -11,6 +11,7 @@ import cv2 as cv
 import numpy as np
 from pyzbar.pyzbar import decode
 import os
+from vputils import get_frame_size_and_fps
 
 
 # Detect whether there is a QR code in the frame
@@ -68,19 +69,6 @@ def detect_QR_code_pyzbar(frame):
             cv.putText(frame, code_info, (int(code_points[0].x), int(code_points[0].y - 10)),
                         cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     return frame, ifdetected
-
-
-# Get the frame size and fps of a video
-def get_frame_size_and_fps(video_path):
-    cap = cv.VideoCapture(video_path)
-    if not cap.isOpened():
-        print("Cannot open file")
-        exit()
-    width = int(cap.get(cv.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv.CAP_PROP_FPS)
-    cap.release()
-    return width, height, fps
 
 
 def visual_QR_codes(visual_video_path, test_video_path, fps, width, height):

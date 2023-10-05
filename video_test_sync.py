@@ -17,6 +17,8 @@ Author: yuanyuan.yao@kuleuven.be
 import cv2 as cv
 import numpy as np
 import os
+from vputils import add_QR_code
+
 
 # Read markers from a directory and resize them to the same size
 def read_markers(dir_path, size=100):
@@ -29,6 +31,7 @@ def read_markers(dir_path, size=100):
                 markers.append(img)
     return markers
 
+
 # Add markers to the four corners of a frame
 def add_markers(frame, markers):
     size = markers[0].shape[0]
@@ -36,28 +39,6 @@ def add_markers(frame, markers):
     frame[0:size, -size:, :] = markers[1]
     frame[-size:, 0:size, :] = markers[2]
     frame[-size:, -size:, :] = markers[3]
-    return frame
-
-# Add the QR code at given position
-def add_QR_code(frame, QR_code_path, start_x, start_y):
-    QR_code = cv.imread(QR_code_path)
-    end_x = start_x + QR_code.shape[1]
-    end_y = start_y + QR_code.shape[0]
-    frame[start_y:end_y, start_x:end_x, :] = QR_code
-    return frame
-
-# Add an image in the center of a frame
-def add_QR_code_center(frame, QR_code_path):
-    QR_code = cv.imread(QR_code_path)
-    start_x = (frame.shape[1] - QR_code.shape[1]) // 2
-    end_x = (frame.shape[1] + QR_code.shape[1]) // 2
-    if (end_x - start_x) != QR_code.shape[1]:
-        end_x += 1
-    start_y = (frame.shape[0] - QR_code.shape[0]) // 2
-    end_y = (frame.shape[0] + QR_code.shape[0]) // 2
-    if (end_y - start_y) != QR_code.shape[0]:
-        end_y += 1
-    frame[start_y:end_y, start_x:end_x, :] = QR_code
     return frame
 
 

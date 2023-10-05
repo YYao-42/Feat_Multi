@@ -9,18 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import cv2 as cv
-
-
-def get_frame_size_and_fps(video_path):
-    cap = cv.VideoCapture(video_path)
-    if not cap.isOpened():
-        print("Cannot open file")
-        exit()
-    width = int(cap.get(cv.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv.CAP_PROP_FPS)
-    cap.release()
-    return width, height, fps
+from vputils import get_frame_size_and_fps
 
 
 def create_ref_timeline(time_array, start_time_ns):
