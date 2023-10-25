@@ -59,7 +59,7 @@ serial_trigger = int(1)
 nest_asyncio.apply()
 # device = discover_one_device()
 # If doesn't work, try to set the IP manually
-ip = "192.168.137.207"
+ip = "192.168.137.55"
 device = Device(address=ip, port="8080")
 if device is None:
     print("No device found.")
@@ -83,24 +83,19 @@ time.sleep(3)
 # creating vlc media player object
 vlc_instance = vlc.Instance(['--video-on-top'])
 media_player = vlc_instance.media_player_new()
-# media = vlc.Media("videos/blink_wgb.avi")
-media = vlc.Media("videos/video_test_size_120_fps_30_len_7.avi")
+media = vlc.Media("videos/prepend/01_05_MODE_0.avi")
+# media = vlc.Media("videos/video_test_size_120_fps_30_len_7.avi")
 media_player.set_media(media)
 media_player.set_fullscreen(True)
 
 
-# Align NEON and Biosemi at the start of each minute.
-# sched = BlockingScheduler()
-# sched.add_job(send_trigger_per_min, trigger=CronTrigger(second=00), args=[device, port, offset_ms])
-# sched.start()
-
+# Align NEON and Biosemi at the start of each minute use background scheduler
 sched = BackgroundScheduler()
-sched.add_job(send_trigger_per_min, trigger='interval', seconds=60, args=[device, port, offset_ms])  # Example: Run every 60 seconds
-
 
 # Quit when Esc is pressed
 keyboard.add_hotkey("Esc", callback, args=[media_player, vlc_instance, device, port, sched])
 
+time.sleep(20) # time for getting ready (if needed)
 
 # start playing video
 # print(device.send_event("Play (before execution)", event_timestamp_unix_ns=time.time_ns()))
@@ -109,6 +104,7 @@ media_player.play()
 port.write(serial_trigger.to_bytes(1, 'big'))
 timestamp_port = time.time_ns()
 print(device.send_event("Play (after execution)", event_timestamp_unix_ns=(timestamp_port - offset_ms*1e6)))
+sched.add_job(send_trigger_per_min, trigger='interval', seconds=60, args=[device, port, offset_ms])  # Example: Run every 60 seconds
 sched.start()
 while True:
     if media_player.get_state() == vlc.State.Ended:
