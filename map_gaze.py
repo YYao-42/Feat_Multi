@@ -31,7 +31,7 @@ def get_gaze_from_frame_idx(frame_idx, fps, time_array, ref_time_array, gaze_df)
     return gaze
 
 
-def visual_gaze(visual_video_path, ori_video_path, fps, width, height, time_array, ref_time_array, gaze_points):
+def visual_gaze(visual_video_path, ori_video_path, fps, width, height, time_array, ref_time_array, gaze_points, magic_ratio=None):
     frame_idx = 0
     fourcc = cv.VideoWriter_fourcc(*"MJPG")
     writer = cv.VideoWriter(visual_video_path, fourcc, fps, (width, height), True)
@@ -47,8 +47,13 @@ def visual_gaze(visual_video_path, ori_video_path, fps, width, height, time_arra
         if ret:
             gaze = get_gaze_from_frame_idx(frame_idx, fps, time_array, ref_time_array, gaze_points)
             if gaze['gaze detected on surface']:
-                x = int(gaze['gaze position on surface x [normalized]']*width)
-                y = int(gaze['gaze position on surface y [normalized]']*height)
+                x_norm = gaze['gaze position on surface x [normalized]']
+                y_norm = gaze['gaze position on surface y [normalized]']
+                if magic_ratio is not None:
+                    x_norm = (x_norm - 0.5) * magic_ratio + 0.5
+                    x_norm = max(0, min(x_norm, 1)) # make sure the x_norm is in the range of [0, 1]
+                x = int(x_norm*width)
+                y = int(y_norm*height)
                 print('frame_idx: ', frame_idx, 'x: ', x, 'y: ', y)
                 cv.circle(frame, (x, y), 25, (0, 0, 255), -1)
             # Display the resulting frame
@@ -66,7 +71,7 @@ def visual_gaze(visual_video_path, ori_video_path, fps, width, height, time_arra
 
 if __name__ == "__main__":
 
-    Trial_Name = 'Trial_1'
+    Trial_Name = 'Trial_2'
     path_raw = 'data/' + Trial_Name + '/Raw/'
     path_map = 'data/' + Trial_Name + '/Marker_Mapper/'
 
@@ -75,7 +80,7 @@ if __name__ == "__main__":
     section_info = pd.read_csv(path_raw + 'sections.csv')
     section_id = section_info['section id'][0]
     # Get world timestamps
-    world_timestamps = pd.read_csv(path_raw + '2023-09-25_17-13-05-453d15aa/world_timestamps.csv')
+    world_timestamps = pd.read_csv(path_raw + '2023-10-13_18-06-27-9d018119/world_timestamps.csv')
     time_array = world_timestamps['timestamp [ns]'].values
     # Get the mapped gaze points
     gaze_points = pd.read_csv(path_map + 'gaze.csv')
@@ -84,12 +89,13 @@ if __name__ == "__main__":
   
 
     # Option 1: use the time point when the QR code is detected to decide the start time
-    QR_ifdetected = np.load('QR_detected_pyzbar.npy')
-    detected_idx_1st = np.where(QR_ifdetected == 1)[0][0]
-    start_time_ns = time_array[detected_idx_1st] - int(30*1e9) # 30 seconds before the first QR code is detected
+    QR_ifdetected = np.load('QR_detected_pyzbar_3.npy')
+    detected_idx_1st = np.where(QR_ifdetected == 1)[0][-1] + 1
+    start_time_ns = time_array[detected_idx_1st]
     ref_time_array, start_idx = create_ref_timeline(time_array, start_time_ns)
 
-    ori_video_path = "videos/video_test_size_120_fps_30_len_7.avi"
-    visual_video_path = "videos/visual_gaze_2_new.avi"
+    ori_video_path = "videos/pairs/01_05.avi"
+    visual_video_path = "videos/visual_01_05.avi"
     width, height, fps = get_frame_size_and_fps(ori_video_path)
-    visual_gaze(visual_video_path, ori_video_path, fps, width, height, time_array, ref_time_array, gaze_points)
+    magic_ratio = 1.77/1.12
+    visual_gaze(visual_video_path, ori_video_path, fps, width, height, time_array, ref_time_array, gaze_points, magic_ratio)
