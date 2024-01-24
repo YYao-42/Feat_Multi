@@ -1,8 +1,8 @@
 /videos
 /data
 /features
+/mask-rcnn
 /__pycache__
 /.vscode
-/legacy
 Draft*
 *.npy

@@ -1,5 +1,6 @@
 import numpy as np
 import cv2 as cv
+import time
 
 
 def get_frame_size_and_fps(video_path):
@@ -39,3 +40,71 @@ def add_progress_bar(frame, progress, bar_height=20):
 def addText(frame, text, pos, color=(255,255,255), font=cv.FONT_HERSHEY_SIMPLEX, fontScale=3, thickness=3):
     return cv.putText(frame, text, pos, font, fontScale, color, thickness, cv.LINE_AA)
 
+
+def object_seg_maskrcnn(frame, net, args, LABELS, detect_label='person'):
+	'''
+	Use pretrained Mask R-CNN network to perform object segmentation
+	Inputs:
+	frame: current frame
+	net: mask r-cnn net for object segmentation
+	args: pre-defined parameters
+	LABELS: labels of all classes
+	detect_label: class to be detected; Default: person
+	Outputs:
+	boxes: boxes of the detected objects
+	confidences: confidences of detected objects 
+	classIDs: indices of the classes objects belong to; use together with LABELS to get the corresponding labels 
+	masks: masks of the object
+	elap: processing time
+	'''
+	start = time.time()
+	# construct a blob from the input frame and then perform a forward
+	# pass of the YOLO object detector, giving us our bounding boxes
+	# and associated probabilities
+	blob = cv.dnn.blobFromImage(frame, swapRB=True, crop=False)
+	net.setInput(blob)
+	(boxes_info, masks_info) = net.forward(["detection_out_final",
+		"detection_masks"])
+	# initialize our lists of detected bounding boxes, confidences,
+	# and masks, respectively
+	boxes = []
+	confidences = []
+	classIDs = []
+	masks = []
+	# loop over the number of detected objects
+	for i in range(0, boxes_info.shape[2]):
+		# extract the class ID of the detection along with the
+		# confidence (i.e., probability) associated with the
+		# prediction
+		classID = int(boxes_info[0, 0, i, 1])
+		confidence = boxes_info[0, 0, i, 2]
+		# filter out weak predictions by ensuring the detected
+		# probability is greater than the minimum probability
+		if confidence > args["confidence"] and LABELS[classID]==detect_label:
+			# scale the bounding box coordinates back relative to the
+			# size of the frame and then compute the width and the
+			# height of the bounding box
+			(H, W) = frame.shape[:2]
+			box = boxes_info[0, 0, i, 3:7] * np.array([W, H, W, H])
+			(startX, startY, endX, endY) = box.astype("int")
+			boxW = endX - startX
+			boxH = endY - startY
+			# extract the pixel-wise segmentation for the object,
+			# resize the mask such that it's the same dimensions of
+			# the bounding box, and then finally threshold to create
+			# a *binary* mask
+			mask = masks_info[i, classID]
+			mask = cv.resize(mask, (boxW, boxH),
+				interpolation=cv.INTER_NEAREST)
+			mask = (mask > args["threshold"])
+			# extract the ROI of the image but *only* extracted the
+			# masked region of the ROI
+			# roi = frame[startY:endY, startX:endX][mask]
+			boxes.append([startX, startY, boxW, boxH])
+			confidences.append(float(confidence))
+			classIDs.append(classID)
+			masks.append(mask)
+
+	end = time.time()
+	elap = end-start
+	return boxes, confidences, classIDs, masks, elap
