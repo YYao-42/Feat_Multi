@@ -1,5 +1,5 @@
 '''
-This script is used to generate multi-object videos.
+This script is used to generate multi-object videos by stitching two videos side by side.
 It has three steps:
     - divide videos into pairs and stitch two videos in each pair side by side
         - video 1 can initially be on the left, right, top or bottom of the screen/canvas (randomly selected)
@@ -234,15 +234,15 @@ video_dict = {'01': 'the dancer in a white shirt', '05': 'the dancer in a black 
               '06': 'the mime actor with a briefcase', '04': 'the sitting magician',
               '09': 'the dancer', '07': 'the acrobat actor',
               '13': 'the dancer in a blue shirt', '15': 'the dancer in a red shirt',
-              '16': 'the mime arctor with a hat', '14': 'the sitting mime artress'}
+              '16': 'the mime arctor with a hat', '14': 'the sitting mime actress'}
 # if a output directory does not exist, create one
-stitched_output = 'videos/pairs/'
+stitched_output = 'videos/STITCH/pairs/'
 if not os.path.exists(stitched_output):
     os.makedirs(stitched_output)
-prepend_output = 'videos/prepend/'
+prepend_output = 'videos/STITCH/prepend/'
 if not os.path.exists(prepend_output):
     os.makedirs(prepend_output)
-concat_output = 'videos/concat/'
+concat_output = 'videos/STITCH/concat/'
 if not os.path.exists(concat_output):
     os.makedirs(concat_output)
 
