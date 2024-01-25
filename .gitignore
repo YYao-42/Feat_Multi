@@ -2,6 +2,7 @@
 /data
 /features
 /mask-rcnn
+/checkpoints
 /__pycache__
 /.vscode
 Draft*

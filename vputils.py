@@ -1,6 +1,8 @@
 import numpy as np
 import cv2 as cv
 import time
+from mmdet.apis import init_detector, inference_detector
+import torch
 
 
 def get_frame_size_and_fps(video_path):
@@ -108,3 +110,35 @@ def object_seg_maskrcnn(frame, net, args, LABELS, detect_label='person'):
 	end = time.time()
 	elap = end-start
 	return boxes, confidences, classIDs, masks, elap
+
+
+def object_seg_mmdetection(frame, net, args):
+	'''
+	Use pretrained Mask R-CNN network to perform object segmentation
+	Inputs:
+	frame: current frame
+	net: mask r-cnn net for object segmentation (using mmdetection package)
+	args: pre-defined parameters
+	Outputs:
+	boxes: boxes of the detected objects
+	confidences: confidences of detected objects 
+	masks: masks of the object
+	elap: processing time
+	'''
+	start = time.time()
+	result = inference_detector(net, frame)
+	result_mask = torch.logical_and(result.pred_instances['labels'] == args["detectlabel"], result.pred_instances['scores'] > args["confidence"])
+	bboxes = result.pred_instances['bboxes'][result_mask,:]
+	masks = result.pred_instances['masks'][result_mask,:,:]
+	bboxes = bboxes.cpu().numpy().astype(int)
+	masks = masks.cpu().numpy()
+	masks_list = [masks[i,bboxes[i,1]:bboxes[i,3],bboxes[i,0]:bboxes[i,2]] for i in range(masks.shape[0])]
+	bboxes_H = bboxes[:,3] - bboxes[:,1]
+	bboxes_W = bboxes[:,2] - bboxes[:,0]
+	# replace the last two columns with the height and width of the bounding box
+	bboxes[:,2] = bboxes_W
+	bboxes[:,3] = bboxes_H
+	bboxes_list = [bboxes[i,:] for i in range(bboxes.shape[0])]
+	end = time.time()
+	elap = end-start
+	return bboxes_list, masks_list, elap
