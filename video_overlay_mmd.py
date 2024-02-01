@@ -26,22 +26,25 @@ from mmdet.utils import register_all_modules
 def generate_video_pairs(dir_parent, video_dict=None):
     # list the videos in the video_dict (the keys)
     if video_dict is not None:
-        video_list = [video for video in os.listdir(dir_parent) if video.startswith(tuple(video_dict.keys()))]
+        video_list = []
+        video_IDs = list(video_dict.keys())
+        for ID in video_IDs:
+            video_list.append([video for video in os.listdir(dir_parent) if video.startswith(ID)][0])
     else:
         # list the videos in the directory that do not end with '_drop.mp4'
         video_list = [video for video in os.listdir(dir_parent) if not video.endswith('_drop.mp4')]
-    # get the number of frames of each video
-    num_frames = []
-    for video in video_list:
-        video_path = dir_parent + video
-        cap = cv.VideoCapture(video_path)
-        if not cap.isOpened():
-            print("Cannot open file")
-            exit()
-        num_frames.append(int(cap.get(cv.CAP_PROP_FRAME_COUNT)))
-        cap.release()
-    # sort the video list based on the number of frames
-    video_list = [x for _, x in sorted(zip(num_frames, video_list))]
+        # get the number of frames of each video
+        num_frames = []
+        for video in video_list:
+            video_path = dir_parent + video
+            cap = cv.VideoCapture(video_path)
+            if not cap.isOpened():
+                print("Cannot open file")
+                exit()
+            num_frames.append(int(cap.get(cv.CAP_PROP_FRAME_COUNT)))
+            cap.release()
+        # sort the video list based on the number of frames
+        video_list = [x for _, x in sorted(zip(num_frames, video_list))]
     # divide the video list into pairs
     video_pairs = []
     for i in range(0, len(video_list), 2):
@@ -66,7 +69,7 @@ def extract_box_info_folder(folder_path, video_dict, args):
     # if not, generate the box info file
     for video in video_dict.keys():
         video_name = [v for v in os.listdir(folder_path) if v.startswith(video)][0]
-        box_info_path = box_info_output + video + '_box_info_mm.pkl'
+        box_info_path = box_info_output + video + '_box_info_raw.pkl'
         if not os.path.exists(box_info_path):
             print('[INFO] Currently generating box info for video: ', video_name)
             # in the dir folder, search for the video with file name starts with the video ID
@@ -123,7 +126,7 @@ def extract_box_info_video(video_path, net, args):
     return box_info, fps, frame_width, frame_height
 
 
-def overlay_two_videos(dir_parent, dir_output, pair, max_time=np.inf, target_size=None, v1_box_info=None, v2_box_info=None):
+def overlay_two_videos(dir_parent, dir_output, pair, max_time=np.inf, w1=0.5, w2=0.5, target_size=None, v1_box_info=None, v2_box_info=None):
         print('Currently overlaying video pair: ', pair)
         # load the videos
         video_1_ID = pair[0][:2]
@@ -149,10 +152,6 @@ def overlay_two_videos(dir_parent, dir_output, pair, max_time=np.inf, target_siz
         if target_size is not None:
             output_path = dir_output + video_1_ID + '_' + video_2_ID + '_Crop_Pair.avi'
             out = cv.VideoWriter(output_path, fourcc, fps1, target_size)
-            output_path1 = dir_output + video_1_ID + '_Crop.avi'
-            out1 = cv.VideoWriter(output_path1, fourcc, fps1, target_size)
-            output_path2 = dir_output + video_2_ID + '_Crop.avi'
-            out2 = cv.VideoWriter(output_path2, fourcc, fps1, target_size)
         else:
             output_path = dir_output + video_1_ID + '_' + video_2_ID + '_Pair.avi'
             out = cv.VideoWriter(output_path, fourcc, fps1, (frame_width1, frame_height1))
@@ -167,25 +166,20 @@ def overlay_two_videos(dir_parent, dir_output, pair, max_time=np.inf, target_siz
             if v1_box_info is not None:
                 x_start, y_start, w, h = v1_box_info['box_info'][frame_count, :]
                 frame1 = frame1[int(y_start):int(y_start + h), int(x_start):int(x_start + w), :]
-                out1.write(frame1)
             if v2_box_info is not None:
                 x_start, y_start, w, h = v2_box_info['box_info'][frame_count, :]
                 frame2 = frame2[int(y_start):int(y_start + h), int(x_start):int(x_start + w), :]
-                out2.write(frame2)
             # overlay the two frames
-            frame = cv.addWeighted(frame1, 0.5, frame2, 0.5, 0)
+            frame = cv.addWeighted(frame1, w1, frame2, w2, 0)
             # write the frame into the output video
             out.write(frame)
             frame_count += 1
         cap1.release()
         cap2.release()
         out.release()
-        if target_size is not None:
-            out1.release()
-            out2.release()
 
 
-def get_nb_prepend_frames(nb_vid_frames, fs, force=True):
+def get_nb_prepend_frames(nb_vid_frames, fs, force=False):
     min = nb_vid_frames // (fs * 60)
     sec = (nb_vid_frames % (fs * 60)) // fs
     if sec < 30 or force:
@@ -196,9 +190,11 @@ def get_nb_prepend_frames(nb_vid_frames, fs, force=True):
     return nb_frames_left
 
 
-def add_prepended_content(MODE, stitched_output, video_name, prepend_output, descrip_dict):
+def add_prepended_content(MODE, merged_output, video_name, prepend_output, descrip_dict):
     print('Currently prepending content to video: ', video_name)
-    video_pair_path = stitched_output + video_name
+    frame_width = args["canvaswidth"]
+    frame_height = args["canvasheight"]
+    video_pair_path = merged_output + video_name
     pair_ID = video_name[:5].split('_')
     video_ID_attend = pair_ID[0] if MODE == 0 else pair_ID[1]
     # get the description of the attended video
@@ -206,8 +202,6 @@ def add_prepended_content(MODE, stitched_output, video_name, prepend_output, des
     cap = cv.VideoCapture(video_pair_path)
     fps = round(cap.get(cv.CAP_PROP_FPS))
     nb_frame = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
-    frame_width = int(cap.get(cv.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))
     nb_frames_left = get_nb_prepend_frames(nb_frame, fps)
     # write video
     fourcc = cv.VideoWriter_fourcc(*'XVID')
@@ -227,20 +221,29 @@ def add_prepended_content(MODE, stitched_output, video_name, prepend_output, des
             vputils.addText(frame, video_descrip_attend, (950, 500), fontScale=1.5, thickness=2)
         out.write(frame)
     while True:
-        ret, frame = cap.read()
+        ret, frame_ori = cap.read()
         if not ret:
             break
+        # if the size of frame_ori does not match the target size, put the video in the center of the canvas
+        if frame_ori.shape[0] != frame_height or frame_ori.shape[1] != frame_width:
+            frame = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
+            x_start = int((frame_width - frame_ori.shape[1]) / 2)
+            y_start = int((frame_height - frame_ori.shape[0]) / 2)
+            frame[y_start:y_start + frame_ori.shape[0], x_start:x_start + frame_ori.shape[1], :] = frame_ori
+        else:
+            frame = frame_ori
+        frame[:120, -120:, :] = 255
         out.write(frame)
     cap.release()
     out.release()
 
 
-def concat_videos(prepend_dir, concat_dir, ifDUAL=False):
-    if ifDUAL:
-        video_to_concat = [video for video in os.listdir(prepend_dir) if 'DUAL' in video]
+def concat_videos(prepend_dir, concat_dir, ifCROP=False):
+    if ifCROP:
+        video_to_concat = [video for video in os.listdir(prepend_dir) if 'Crop' in video]
         output_path = concat_dir + 'Trial_2' + '.avi'
     else:
-        video_to_concat = [video for video in os.listdir(prepend_dir) if 'DUAL' not in video]
+        video_to_concat = [video for video in os.listdir(prepend_dir) if 'Crop' not in video]
         output_path = concat_dir + 'Trial_1' + '.avi'
     video_to_concat.sort()
     video_to_concat = [prepend_dir + video for video in video_to_concat]
@@ -249,6 +252,7 @@ def concat_videos(prepend_dir, concat_dir, ifDUAL=False):
     fourcc = cv.VideoWriter_fourcc(*'XVID')
     out = cv.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
     for video in video_to_concat:
+        print('Currently concatenating video: ', video)
         cap = cv.VideoCapture(video)
         while True:
             ret, frame = cap.read()
@@ -272,7 +276,8 @@ def expand_boxes(target_height, target_width, ori_height, ori_width, ori_x_start
     new_y_start = new_y_end - target_height
     assert new_x_start >= 0 and new_y_start >= 0, 'New box out of frame!'
     new_box_info = [new_x_start, new_y_start, target_width, target_height]
-    return new_box_info
+    center_xy = [new_x_start + target_width / 2, new_y_start + target_height / 2]
+    return new_box_info, center_xy
 
 
 def clean_boxes_info(box_info, fps, smooth=True):
@@ -309,19 +314,29 @@ def boxes_update_pair(v1_box_path, v2_box_path):
     v2_max_h = np.max(v2_box_info['box_info'][:, 3])
     # the shape of the canvas is the max w and h of the two videos
     canvas_height = int(max(v1_max_h, v2_max_h))
-    canvas_width = int(max(v1_max_w, v2_max_w)*2)
+    canvas_width = int(max(v1_max_w, v2_max_w)*1.2)
     len_v1 = v1_box_info['box_info'].shape[0]
     len_v2 = v2_box_info['box_info'].shape[0]
     len_final = min(len_v1, len_v2)
     v1_box_updated = np.zeros((len_final, 4))
     v2_box_updated = np.zeros((len_final, 4))
+    v1_center_xy = np.zeros((len_final, 2))
+    v2_center_xy = np.zeros((len_final, 2))
     for i in range(len_final):
         ori_x_start, ori_y_start, ori_width, ori_height = v1_box_info['box_info'][i, :]
-        v1_box_updated[i, :] = expand_boxes(canvas_height, canvas_width, ori_height, ori_width, ori_x_start, ori_y_start, v1_box_info['frame_height'], v1_box_info['frame_width'])
+        v1_box_updated[i, :], v1_center_xy[i, :]  = expand_boxes(canvas_height, canvas_width, ori_height, ori_width, ori_x_start, ori_y_start, v1_box_info['frame_height'], v1_box_info['frame_width'])
         ori_x_start, ori_y_start, ori_width, ori_height = v2_box_info['box_info'][i, :]
-        v2_box_updated[i, :] = expand_boxes(canvas_height, canvas_width, ori_height, ori_width, ori_x_start, ori_y_start, v2_box_info['frame_height'], v2_box_info['frame_width'])
+        v2_box_updated[i, :], v2_center_xy[i, :]  = expand_boxes(canvas_height, canvas_width, ori_height, ori_width, ori_x_start, ori_y_start, v2_box_info['frame_height'], v2_box_info['frame_width'])
     v1_box_info['box_info'] = v1_box_updated
     v2_box_info['box_info'] = v2_box_updated
+    # add the center coordinates to the box info
+    v1_box_info['center_xy'] = v1_center_xy
+    v2_box_info['center_xy'] = v2_center_xy
+    # save the box info as a pickle file
+    with open(v1_box_path[:-8] + '_processed.pkl', 'wb') as f:
+        pickle.dump(v1_box_info, f)
+    with open(v2_box_path[:-8] + '_processed.pkl', 'wb') as f:
+        pickle.dump(v2_box_info, f)
     target_size = (canvas_width, canvas_height)
     return v1_box_info, v2_box_info, target_size
     
@@ -334,84 +349,70 @@ ap = argparse.ArgumentParser()
 # 	help="path to output video")
 ap.add_argument('-ol', '--overlay', action='store_true',
     help='Include if overlay the two videos in each pair')
-ap.add_argument("-m", "--mask-rcnn", default='mask-rcnn',
-	help="base path to mask-rcnn directory")
+ap.add_argument('-pp', '--prepend', action='store_true',
+    help='Include if prepend content to the overlayed video')
+ap.add_argument('-ct', '--concat', action='store_true',
+    help='Include if concatenate the prepended videos')
 ap.add_argument('-cobj', '--cropobj', action='store_true',
     help='Include if crop the object from the video')
-# ap.add_argument('-GPU', '--GPU', action='store_true',
-#     help='Include if use GPU acceleration')
 ap.add_argument("-dl", "--detectlabel", type=int, default=0,
 	help="class of objects to be detected (default: 0 -> person)")
-ap.add_argument("-maxt", "--maxtime", type=int, default=600,
+ap.add_argument("-maxt", "--maxtime", type=int, default=250,
 	help="maximum time of the video to be processed")
-ap.add_argument("-c", "--confidence", type=float, default=0.5,
+ap.add_argument("-ch", "--canvasheight", type=int, default=1080,
+        help="height of the canvas")
+ap.add_argument("-cw", "--canvaswidth", type=int, default=1920,
+        help="width of the canvas")
+ap.add_argument("-confi", "--confidence", type=float, default=0.5,
 	help="minimum probability to filter weak detections")
 args = vars(ap.parse_args())
 
 
-video_dict = {'01': 'the dancer in a white shirt', '05': 'the dancer in a black shirt',
-              '03': 'the acrobat actress on a unicycle', '08': 'the sitting magician',
-              '06': 'the mime actor with a briefcase', '04': 'the sitting magician',
-              '09': 'the dancer', '07': 'the acrobat actor',
-              '13': 'the dancer in a blue shirt', '15': 'the dancer in a red shirt',
-              '16': 'the mime arctor with a hat', '14': 'the sitting mime actress'}
-dir_parent = '../Feature extraction/videos/ori_video/'
+video_dict = {'01': 'the dancer in a white T-shirt', '13': 'the dancer in a blue shirt',
+              '02': 'the mime actor', '12': 'the magician',
+              '03': 'the acrobat actress on a unicycle', '05': 'the dancer in a black shirt',
+              '04': 'the sitting magician', '09': 'the dancer',
+              '06': 'the mime actor with a briefcase', '16': 'the mime actor with a hat',
+              '07': 'the acrobat actor wearing a vest', '14': 'the sitting mime actress',
+              '08': 'the sitting magician', '15': 'the dancer in a red shirt'}
 
-# video_dict = {'13': 'the dancer in a blue shirt', '15': 'the dancer in a red shirt'}
-# dir_parent = '../Feature extraction/videos/ori_video/'
+dir_parent = '../Feature extraction/videos/ori_video/'
 
 extract_box_info_folder(dir_parent, video_dict, args)
 
 overlayed_output = 'videos/OVERLAY/pairs/'
 if not os.path.exists(overlayed_output):
     os.makedirs(overlayed_output)
+prepend_output = 'videos/OVERLAY/prepend/'
+if not os.path.exists(prepend_output):
+    os.makedirs(prepend_output)
+concat_output = 'videos/OVERLAY/concat/'
+if not os.path.exists(concat_output):
+    os.makedirs(concat_output)
 
 if args["overlay"]:
     video_pairs = generate_video_pairs(dir_parent, video_dict)
-    for pair in video_pairs:
-        # find the box info for the two videos in the pair
-        v1_box_path = 'videos/OVERLAY/box_info/' + pair[0][:2] + '_box_info_mm.pkl'
-        v2_box_path = 'videos/OVERLAY/box_info/' + pair[1][:2] + '_box_info_mm.pkl'
-        v1_box_info, v2_box_info, target_size = boxes_update_pair(v1_box_path, v2_box_path)
-        overlay_two_videos(dir_parent, overlayed_output, pair, args["maxtime"], target_size, v1_box_info, v2_box_info)
+    if args["cropobj"]:
+        for pair in video_pairs:
+            # find the box info for the two videos in the pair
+            v1_box_path = 'videos/OVERLAY/box_info/' + pair[0][:2] + '_box_info_mm.pkl'
+            v2_box_path = 'videos/OVERLAY/box_info/' + pair[1][:2] + '_box_info_mm.pkl'
+            v1_box_info, v2_box_info, target_size = boxes_update_pair(v1_box_path, v2_box_path)
+            overlay_two_videos(dir_parent, overlayed_output, pair, max_time=args["maxtime"], w1=0.5, w2=0.5, target_size=target_size, v1_box_info=v1_box_info, v2_box_info=v2_box_info)
+    else:
+        for pair in video_pairs:
+            overlay_two_videos(dir_parent, overlayed_output, pair, max_time=args["maxtime"], w1=0.5, w2=0.5)
 overlayed_video_list = [video for video in os.listdir(overlayed_output) if video.endswith('.avi')]
 
-# # canvas_height = 1080
-# # canvas_width = 1920
+if args["prepend"]:
+    MODE = 0
+    for pair in overlayed_video_list:
+        add_prepended_content(MODE, overlayed_output, pair, prepend_output, video_dict)
+    MODE = 1
+    for pair in overlayed_video_list:
+        add_prepended_content(MODE, overlayed_output, pair, prepend_output, video_dict)
 
-# OVERLAYED = False
-# PREPENDED = True
-# CONCATENATED = True
+if args["concat"]:
+    concat_videos(prepend_output, concat_output)
+    concat_videos(prepend_output, concat_output, ifCROP=True)
 
-# # if a output directory does not exist, create one
-# overlayed_output = 'videos/OVERLAY/pairs/'
-# if not os.path.exists(overlayed_output):
-#     os.makedirs(overlayed_output)
-# prepend_output = 'videos/OVERLAY/prepend/'
-# if not os.path.exists(prepend_output):
-#     os.makedirs(prepend_output)
-# concat_output = 'videos/OVERLAY/concat/'
-# if not os.path.exists(concat_output):
-#     os.makedirs(concat_output)
-
-# if not OVERLAYED:
-#     dir_parent = '../Feature extraction/videos/ori_video/'
-#     video_pairs = generate_video_pairs(dir_parent)
-#     for pair in video_pairs:
-#         overlay_two_videos(dir_parent, overlayed_output, pair, max_time)
-# overlayed_video_list = [video for video in os.listdir(overlayed_output) if video.endswith('.avi')]
-
-# if not PREPENDED:
-#     MODE = 0
-#     for stitched_pair in overlayed_video_list:
-#         add_prepended_content(MODE, overlayed_output, stitched_pair, prepend_output, video_dict)
-#     MODE = 1
-#     for stitched_pair in overlayed_video_list:
-#         add_prepended_content(MODE, overlayed_output, stitched_pair, prepend_output, video_dict)
-
-# if not CONCATENATED:
-#     concat_videos(prepend_output, concat_output)
-#     concat_videos(prepend_output, concat_output, ifDUAL=True)
-
-# if OVERLAYED and PREPENDED and CONCATENATED:
-#     print('You are all set!')
