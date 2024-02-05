@@ -1,7 +1,7 @@
 '''
 This script is used to overlay two videos together.
 It has three steps:
-    - divide videos into pairs and overlay the videos in each pair (videos in each pair should have the same length, size, and frame rate)
+    - divide videos into pairs and overlay the videos in each pair (videos in each pair should have the same size and frame rate)
     - prepend content (QR code and instructions) to the overlayed video and make sure the video length is a multiple of 1 minute
     - concatenate the prepended videos into two trials
         
@@ -126,7 +126,21 @@ def extract_box_info_video(video_path, net, args):
     return box_info, fps, frame_width, frame_height
 
 
-def overlay_two_videos(dir_parent, dir_output, pair, max_time=np.inf, w1=0.5, w2=0.5, target_size=None, v1_box_info=None, v2_box_info=None):
+def get_weights(nb_frames, change_time, fps, target_weight, ATT, change_duration_s=2):
+    change_start_point = int(change_time * fps)
+    change_duration = int(change_duration_s * fps)
+
+    if ATT:
+        weights = np.ones(nb_frames)
+        weights[change_start_point:change_start_point + change_duration] = np.linspace(1, target_weight, change_duration)
+    else:
+        weights = np.zeros(nb_frames)
+        weights[change_start_point:change_start_point + change_duration] = np.linspace(0, target_weight, change_duration)
+    weights[change_start_point + change_duration:] = target_weight
+    return weights
+
+
+def overlay_two_videos(dir_parent, dir_output, pair, MODE, change_time=120, max_time=np.inf, w1=0.5, w2=0.5, target_size=None, v1_box_info=None, v2_box_info=None):
         print('Currently overlaying video pair: ', pair)
         # load the videos
         video_1_ID = pair[0][:2]
@@ -139,6 +153,9 @@ def overlay_two_videos(dir_parent, dir_output, pair, max_time=np.inf, w1=0.5, w2
         # get the frame rate of the videos
         fps1 = round(cap1.get(cv.CAP_PROP_FPS))
         fps2 = round(cap2.get(cv.CAP_PROP_FPS))
+        # get number of frames of the videos
+        nb_frames1 = int(cap1.get(cv.CAP_PROP_FRAME_COUNT))
+        nb_frames2 = int(cap2.get(cv.CAP_PROP_FRAME_COUNT))
         # get the size of the videos
         frame_width1 = int(cap1.get(cv.CAP_PROP_FRAME_WIDTH))
         frame_height1 = int(cap1.get(cv.CAP_PROP_FRAME_HEIGHT))
@@ -146,17 +163,24 @@ def overlay_two_videos(dir_parent, dir_output, pair, max_time=np.inf, w1=0.5, w2
         frame_height2 = int(cap2.get(cv.CAP_PROP_FRAME_HEIGHT))
         assert fps1 == fps2, 'The frame rate of the two videos are not the same!'
         assert frame_width1 == frame_width2 and frame_height1 == frame_height2, 'The size of the two videos are not the same!'
-        max_frame = int(fps1 * max_time)
+        nb_frames = min(int(fps1 * max_time), nb_frames1, nb_frames2)
+        if MODE == 0:
+            att_ID = video_1_ID
+            v1_weights = get_weights(nb_frames, change_time, fps1, w1, ATT=True, change_duration_s=2)
+            v2_weights = get_weights(nb_frames, change_time, fps2, w2, ATT=False, change_duration_s=2)
+        else:
+            att_ID = video_2_ID
+            v1_weights = get_weights(nb_frames, change_time, fps1, w1, ATT=False)
+            v2_weights = get_weights(nb_frames, change_time, fps2, w2, ATT=True)
         # create an output video writer (avi)
         fourcc = cv.VideoWriter_fourcc(*'XVID')
         if target_size is not None:
-            output_path = dir_output + video_1_ID + '_' + video_2_ID + '_Crop_Pair.avi'
-            out = cv.VideoWriter(output_path, fourcc, fps1, target_size)
+            output_path = dir_output + video_1_ID + '_' + video_2_ID + '_' + att_ID + '_Crop_Pair.avi'
         else:
-            output_path = dir_output + video_1_ID + '_' + video_2_ID + '_Pair.avi'
-            out = cv.VideoWriter(output_path, fourcc, fps1, (frame_width1, frame_height1))
+            output_path = dir_output + video_1_ID + '_' + video_2_ID + '_' + att_ID + '_Pair.avi'
+        out = cv.VideoWriter(output_path, fourcc, fps1, (frame_width1, frame_height1))
         frame_count = 0
-        while frame_count < max_frame:
+        while frame_count < nb_frames:
             # Read frames from the two videos
             ret1, frame1 = cap1.read()
             ret2, frame2 = cap2.read()
@@ -170,7 +194,24 @@ def overlay_two_videos(dir_parent, dir_output, pair, max_time=np.inf, w1=0.5, w2
                 x_start, y_start, w, h = v2_box_info['box_info'][frame_count, :]
                 frame2 = frame2[int(y_start):int(y_start + h), int(x_start):int(x_start + w), :]
             # overlay the two frames
-            frame = cv.addWeighted(frame1, w1, frame2, w2, 0)
+            frame_overlaid = cv.addWeighted(frame1, v1_weights[frame_count], frame2, v2_weights[frame_count], 0)
+            # change the data type of the frame to uint8
+            frame_overlaid = frame_overlaid.astype(np.uint8)
+            # if the size of frame_ori does not match the target size, put the video in the center of the canvas
+            if frame_overlaid.shape[0] != frame_height1 or frame_overlaid.shape[1] != frame_width1:
+                frame = np.zeros((frame_height1, frame_width1, 3), dtype=np.uint8)
+                x_start = int((frame_width1 - frame_overlaid.shape[1]) / 2)
+                y_start = int((frame_height1 - frame_overlaid.shape[0]) / 2)
+                frame[y_start:y_start + frame_overlaid.shape[0], x_start:x_start + frame_overlaid.shape[1], :] = frame_overlaid
+            else:
+                frame = frame_overlaid
+            # add a box at the top right corner
+            if frame_count < int(change_time * fps1):
+                frame[:120, -120:, :] = 128
+            elif frame_count < int((change_time + 2) * fps1):
+                frame[:120, -120:, :] = 0
+            else:
+                frame[:120, -120:, :] = 255
             # write the frame into the output video
             out.write(frame)
             frame_count += 1
@@ -190,22 +231,18 @@ def get_nb_prepend_frames(nb_vid_frames, fs, force=False):
     return nb_frames_left
 
 
-def add_prepended_content(MODE, merged_output, video_name, prepend_output, descrip_dict):
+def add_prepended_content(merged_output, video_name, prepend_output):
     print('Currently prepending content to video: ', video_name)
     frame_width = args["canvaswidth"]
     frame_height = args["canvasheight"]
     video_pair_path = merged_output + video_name
-    pair_ID = video_name[:5].split('_')
-    video_ID_attend = pair_ID[0] if MODE == 0 else pair_ID[1]
-    # get the description of the attended video
-    video_descrip_attend = descrip_dict[video_ID_attend]
     cap = cv.VideoCapture(video_pair_path)
     fps = round(cap.get(cv.CAP_PROP_FPS))
     nb_frame = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
     nb_frames_left = get_nb_prepend_frames(nb_frame, fps)
     # write video
     fourcc = cv.VideoWriter_fourcc(*'XVID')
-    output_path = prepend_output + video_name[:-4] + '_MODE_' + str(MODE) + '.avi'
+    output_path = prepend_output + video_name
     out = cv.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
     for append_frame_id in range(nb_frames_left):
         frame = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
@@ -216,9 +253,9 @@ def add_prepended_content(MODE, merged_output, video_name, prepend_output, descr
             vputils.addText(frame, 'Please stay still for a moment', (192, 500))
         else:
             vputils.add_QR_code(frame, 'images/qrcode.png', 100, 100)
-            vputils.addText(frame, 'Next Task: ', (950, 200), fontScale=2, thickness=3)
-            vputils.addText(frame, 'Please focus on', (950, 400), fontScale=1.5, thickness=2)
-            vputils.addText(frame, video_descrip_attend, (950, 500), fontScale=1.5, thickness=2)
+            vputils.addText(frame, 'Get some rest', (950, 200), fontScale=2, thickness=3)
+            vputils.addText(frame, 'Task: Please focus on the character', (950, 400), fontScale=1.5, thickness=2)
+            vputils.addText(frame, 'appearing at the beginning of the video', (950, 500), fontScale=1.5, thickness=2)
         out.write(frame)
     while True:
         ret, frame_ori = cap.read()
@@ -232,19 +269,14 @@ def add_prepended_content(MODE, merged_output, video_name, prepend_output, descr
             frame[y_start:y_start + frame_ori.shape[0], x_start:x_start + frame_ori.shape[1], :] = frame_ori
         else:
             frame = frame_ori
-        frame[:120, -120:, :] = 255
         out.write(frame)
     cap.release()
     out.release()
 
 
-def concat_videos(prepend_dir, concat_dir, ifCROP=False):
-    if ifCROP:
-        video_to_concat = [video for video in os.listdir(prepend_dir) if 'Crop' in video]
-        output_path = concat_dir + 'Trial_2' + '.avi'
-    else:
-        video_to_concat = [video for video in os.listdir(prepend_dir) if 'Crop' not in video]
-        output_path = concat_dir + 'Trial_1' + '.avi'
+def concat_videos(prepend_dir, concat_dir, MODE):
+    video_to_concat = [video for video in os.listdir(prepend_dir) if video.split('_')[MODE]==video.split('_')[2]]
+    output_path = concat_dir + 'Trial_' + str(MODE + 1) + '.avi'
     video_to_concat.sort()
     video_to_concat = [prepend_dir + video for video in video_to_concat]
     frame_width, frame_height, fps = vputils.get_frame_size_and_fps(video_to_concat[0])
@@ -357,7 +389,7 @@ ap.add_argument('-cobj', '--cropobj', action='store_true',
     help='Include if crop the object from the video')
 ap.add_argument("-dl", "--detectlabel", type=int, default=0,
 	help="class of objects to be detected (default: 0 -> person)")
-ap.add_argument("-maxt", "--maxtime", type=int, default=250,
+ap.add_argument("-maxt", "--maxtime", type=int, default=600,
 	help="maximum time of the video to be processed")
 ap.add_argument("-ch", "--canvasheight", type=int, default=1080,
         help="height of the canvas")
@@ -376,7 +408,7 @@ video_dict = {'01': 'the dancer in a white T-shirt', '13': 'the dancer in a blue
               '07': 'the acrobat actor wearing a vest', '14': 'the sitting mime actress',
               '08': 'the sitting magician', '15': 'the dancer in a red shirt'}
 
-dir_parent = '../Feature extraction/videos/ori_video/'
+dir_parent = 'videos/ORI/'
 
 extract_box_info_folder(dir_parent, video_dict, args)
 
@@ -395,24 +427,22 @@ if args["overlay"]:
     if args["cropobj"]:
         for pair in video_pairs:
             # find the box info for the two videos in the pair
-            v1_box_path = 'videos/OVERLAY/box_info/' + pair[0][:2] + '_box_info_mm.pkl'
-            v2_box_path = 'videos/OVERLAY/box_info/' + pair[1][:2] + '_box_info_mm.pkl'
+            v1_box_path = 'videos/OVERLAY/box_info/' + pair[0][:2] + '_box_info_raw.pkl'
+            v2_box_path = 'videos/OVERLAY/box_info/' + pair[1][:2] + '_box_info_raw.pkl'
             v1_box_info, v2_box_info, target_size = boxes_update_pair(v1_box_path, v2_box_path)
-            overlay_two_videos(dir_parent, overlayed_output, pair, max_time=args["maxtime"], w1=0.5, w2=0.5, target_size=target_size, v1_box_info=v1_box_info, v2_box_info=v2_box_info)
+            overlay_two_videos(dir_parent, overlayed_output, pair, MODE=0, change_time=120, max_time=args["maxtime"], w1=0.5, w2=0.5, target_size=target_size, v1_box_info=v1_box_info, v2_box_info=v2_box_info)
+            overlay_two_videos(dir_parent, overlayed_output, pair, MODE=1, change_time=120, max_time=args["maxtime"], w1=0.5, w2=0.5, target_size=target_size, v1_box_info=v1_box_info, v2_box_info=v2_box_info)
     else:
         for pair in video_pairs:
-            overlay_two_videos(dir_parent, overlayed_output, pair, max_time=args["maxtime"], w1=0.5, w2=0.5)
+            overlay_two_videos(dir_parent, overlayed_output, pair, MODE=0, max_time=args["maxtime"], w1=0.5, w2=0.5)
+            overlay_two_videos(dir_parent, overlayed_output, pair, MODE=1, max_time=args["maxtime"], w1=0.5, w2=0.5)
 overlayed_video_list = [video for video in os.listdir(overlayed_output) if video.endswith('.avi')]
 
 if args["prepend"]:
-    MODE = 0
     for pair in overlayed_video_list:
-        add_prepended_content(MODE, overlayed_output, pair, prepend_output, video_dict)
-    MODE = 1
-    for pair in overlayed_video_list:
-        add_prepended_content(MODE, overlayed_output, pair, prepend_output, video_dict)
+        add_prepended_content(overlayed_output, pair, prepend_output)
 
 if args["concat"]:
-    concat_videos(prepend_output, concat_output)
-    concat_videos(prepend_output, concat_output, ifCROP=True)
+    concat_videos(prepend_output, concat_output, MODE=0)
+    concat_videos(prepend_output, concat_output, MODE=1)
 
