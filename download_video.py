@@ -22,8 +22,8 @@ def download_and_process_video(url, start_time, end_time, output_name, fps=30):
     subprocess.run(['ffmpeg', '-ss', start_time, '-to', end_time, '-i', 'video_dl.mp4', 'video_trimmed.mp4'])
     # Resample the trimmed video to the specified fps using ffmpeg
     subprocess.run(['ffmpeg', '-i', 'video_trimmed.mp4', '-filter:v', 'fps='+str(fps), 'video_resampled.mp4'])
-    # Resize the resampled video to 1920x1080 using ffmpeg
-    subprocess.run(['ffmpeg', '-i', 'video_resampled.mp4', '-vf', 'scale=w=1920:h=1080:force_original_aspect_ratio=decrease', output_path])
+    # Resize the resampled video to 1920x1080 using ffmpeg (https://creatomate.com/blog/how-to-change-the-resolution-of-a-video-using-ffmpeg)
+    subprocess.run(['ffmpeg', '-i', 'video_resampled.mp4', '-vf', 'scale=w=1920:h=1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1:color=black', output_path])
     # Optionally, remove the original downloaded video
     os.remove('video_dl.mp4')
     os.remove('video_trimmed.mp4')
