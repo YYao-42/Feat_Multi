@@ -17,6 +17,7 @@ import pickle
 import copy
 import scipy
 import pandas as pd
+import subprocess
 import mmcv
 import mmengine
 from mmdet.apis import init_detector, inference_detector
@@ -126,85 +127,111 @@ def extract_box_info_video(video_path, net, args):
     return box_info, fps, frame_width, frame_height
 
 
-def get_weights(nb_frames, change_time, fps, target_weight, ATT, change_duration_s=2):
+def get_weights(nb_frames, change_time, fps, target_weight, ATT, CROPONLY, change_duration_s=2):
     change_start_point = int(change_time * fps)
     change_duration = int(change_duration_s * fps)
-
     if ATT:
         weights = np.ones(nb_frames)
-        weights[change_start_point:change_start_point + change_duration] = np.linspace(1, target_weight, change_duration)
+        if not CROPONLY:
+            weights[change_start_point:change_start_point + change_duration] = np.linspace(1, target_weight, change_duration)
+            weights[change_start_point + change_duration:] = target_weight
     else:
         weights = np.zeros(nb_frames)
-        weights[change_start_point:change_start_point + change_duration] = np.linspace(0, target_weight, change_duration)
-    weights[change_start_point + change_duration:] = target_weight
+        if not CROPONLY:
+            weights[change_start_point:change_start_point + change_duration] = np.linspace(0, target_weight, change_duration)
+            weights[change_start_point + change_duration:] = target_weight
     return weights
 
 
-def overlay_two_videos(dir_parent, dir_output, pair, MODE, change_time=120, max_time=np.inf, w1=0.5, w2=0.5, target_size=None, v1_box_info=None, v2_box_info=None):
-        print('Currently overlaying video pair: ', pair)
-        # load the videos
-        video_1_ID = pair[0][:2]
-        video_2_ID = pair[1][:2]
-        cap1 = cv.VideoCapture(dir_parent + pair[0])
-        cap2 = cv.VideoCapture(dir_parent + pair[1])
-        if not cap1.isOpened() or not cap2.isOpened():
-            print("Cannot open file")
-            exit()
-        # get the frame rate of the videos
-        fps1 = round(cap1.get(cv.CAP_PROP_FPS))
-        fps2 = round(cap2.get(cv.CAP_PROP_FPS))
-        # get number of frames of the videos
-        nb_frames1 = int(cap1.get(cv.CAP_PROP_FRAME_COUNT))
-        nb_frames2 = int(cap2.get(cv.CAP_PROP_FRAME_COUNT))
-        # get the size of the videos
-        frame_width1 = int(cap1.get(cv.CAP_PROP_FRAME_WIDTH))
-        frame_height1 = int(cap1.get(cv.CAP_PROP_FRAME_HEIGHT))
-        frame_width2 = int(cap2.get(cv.CAP_PROP_FRAME_WIDTH))
-        frame_height2 = int(cap2.get(cv.CAP_PROP_FRAME_HEIGHT))
-        assert fps1 == fps2, 'The frame rate of the two videos are not the same!'
-        assert frame_width1 == frame_width2 and frame_height1 == frame_height2, 'The size of the two videos are not the same!'
-        nb_frames = min(int(fps1 * max_time), nb_frames1, nb_frames2)
-        if MODE == 0:
-            att_ID = video_1_ID
-            v1_weights = get_weights(nb_frames, change_time, fps1, w1, ATT=True, change_duration_s=2)
-            v2_weights = get_weights(nb_frames, change_time, fps2, w2, ATT=False, change_duration_s=2)
+def rescale_480(input_file, output_file):
+    # Build the ffmpeg command to transform the video
+    command = [
+        'ffmpeg',
+        '-i', input_file,
+        '-vf', 'scale=854:480',
+        '-c:a', 'copy',  # Copy audio codec without re-encoding
+        '-c:v', 'libx264',  # Use H.264 video codec
+        '-crf', '23',  # Constant Rate Factor (quality), adjust as needed
+        output_file
+    ]
+    # Execute the ffmpeg command
+    subprocess.run(command, check=True)
+
+
+def overlay_two_videos(dir_parent, dir_output, pair, MODE, change_time=120, max_time=np.inf, w1=0.5, w2=0.5, target_size=None, v1_box_info=None, v2_box_info=None, CROPONLY=False):
+    video_1_ID = pair[0][:2]
+    video_2_ID = pair[1][:2]
+    att_ID = video_1_ID if MODE == 0 else video_2_ID
+    if target_size is not None:
+        if CROPONLY:
+            crop_dir_output = dir_output + 'crop/'
+            if not os.path.exists(crop_dir_output):
+                os.makedirs(crop_dir_output)
+            output_path = crop_dir_output + att_ID + '_Crop.avi'
         else:
-            att_ID = video_2_ID
-            v1_weights = get_weights(nb_frames, change_time, fps1, w1, ATT=False)
-            v2_weights = get_weights(nb_frames, change_time, fps2, w2, ATT=True)
-        # create an output video writer (avi)
-        fourcc = cv.VideoWriter_fourcc(*'XVID')
-        if target_size is not None:
             output_path = dir_output + video_1_ID + '_' + video_2_ID + '_' + att_ID + '_Crop_Pair.avi'
+    else:
+        output_path = dir_output + video_1_ID + '_' + video_2_ID + '_' + att_ID + '_Pair.avi'
+    if os.path.exists(output_path):
+        print('The video pair: ', pair, ' already exists!')
+        return
+    print('Currently overlaying video pair: ', pair)
+    # load the videos
+    cap1 = cv.VideoCapture(dir_parent + pair[0])
+    cap2 = cv.VideoCapture(dir_parent + pair[1])
+    if not cap1.isOpened() or not cap2.isOpened():
+        print("Cannot open file")
+        exit()
+    # get the frame rate of the videos
+    fps1 = round(cap1.get(cv.CAP_PROP_FPS))
+    fps2 = round(cap2.get(cv.CAP_PROP_FPS))
+    # get number of frames of the videos
+    nb_frames1 = int(cap1.get(cv.CAP_PROP_FRAME_COUNT))
+    nb_frames2 = int(cap2.get(cv.CAP_PROP_FRAME_COUNT))
+    # get the size of the videos
+    frame_width1 = int(cap1.get(cv.CAP_PROP_FRAME_WIDTH))
+    frame_height1 = int(cap1.get(cv.CAP_PROP_FRAME_HEIGHT))
+    frame_width2 = int(cap2.get(cv.CAP_PROP_FRAME_WIDTH))
+    frame_height2 = int(cap2.get(cv.CAP_PROP_FRAME_HEIGHT))
+    assert fps1 == fps2, 'The frame rate of the two videos are not the same!'
+    assert frame_width1 == frame_width2 and frame_height1 == frame_height2, 'The size of the two videos are not the same!'
+    nb_frames = min(int(fps1 * max_time), nb_frames1, nb_frames2)
+    if MODE == 0:
+        v1_weights = get_weights(nb_frames, change_time, fps1, w1, ATT=True, CROPONLY=CROPONLY, change_duration_s=2)
+        v2_weights = get_weights(nb_frames, change_time, fps2, w2, ATT=False, CROPONLY=CROPONLY, change_duration_s=2)
+    else:
+        v1_weights = get_weights(nb_frames, change_time, fps1, w1, ATT=False, CROPONLY=CROPONLY, change_duration_s=2)
+        v2_weights = get_weights(nb_frames, change_time, fps2, w2, ATT=True, CROPONLY=CROPONLY, change_duration_s=2)
+    # create an output video writer (avi)
+    fourcc = cv.VideoWriter_fourcc(*'XVID')
+    out = cv.VideoWriter(output_path, fourcc, fps1, (frame_width1, frame_height1))
+    frame_count = 0
+    while frame_count < nb_frames:
+        # Read frames from the two videos
+        ret1, frame1 = cap1.read()
+        ret2, frame2 = cap2.read()
+        # Break the loop when either of the videos ends
+        if not ret1 or not ret2:
+            break
+        if v1_box_info is not None:
+            x_start, y_start, w, h = v1_box_info['box_info'][frame_count, :]
+            frame1 = frame1[int(y_start):int(y_start + h), int(x_start):int(x_start + w), :]
+        if v2_box_info is not None:
+            x_start, y_start, w, h = v2_box_info['box_info'][frame_count, :]
+            frame2 = frame2[int(y_start):int(y_start + h), int(x_start):int(x_start + w), :]
+        # overlay the two frames
+        frame_overlaid = cv.addWeighted(frame1, v1_weights[frame_count], frame2, v2_weights[frame_count], 0)
+        # change the data type of the frame to uint8
+        frame_overlaid = frame_overlaid.astype(np.uint8)
+        # if the size of frame_ori does not match the target size, put the video in the center of the canvas
+        if frame_overlaid.shape[0] != frame_height1 or frame_overlaid.shape[1] != frame_width1:
+            frame = np.zeros((frame_height1, frame_width1, 3), dtype=np.uint8)
+            x_start = int((frame_width1 - frame_overlaid.shape[1]) / 2)
+            y_start = int((frame_height1 - frame_overlaid.shape[0]) / 2)
+            frame[y_start:y_start + frame_overlaid.shape[0], x_start:x_start + frame_overlaid.shape[1], :] = frame_overlaid
         else:
-            output_path = dir_output + video_1_ID + '_' + video_2_ID + '_' + att_ID + '_Pair.avi'
-        out = cv.VideoWriter(output_path, fourcc, fps1, (frame_width1, frame_height1))
-        frame_count = 0
-        while frame_count < nb_frames:
-            # Read frames from the two videos
-            ret1, frame1 = cap1.read()
-            ret2, frame2 = cap2.read()
-            # Break the loop when either of the videos ends
-            if not ret1 or not ret2:
-                break
-            if v1_box_info is not None:
-                x_start, y_start, w, h = v1_box_info['box_info'][frame_count, :]
-                frame1 = frame1[int(y_start):int(y_start + h), int(x_start):int(x_start + w), :]
-            if v2_box_info is not None:
-                x_start, y_start, w, h = v2_box_info['box_info'][frame_count, :]
-                frame2 = frame2[int(y_start):int(y_start + h), int(x_start):int(x_start + w), :]
-            # overlay the two frames
-            frame_overlaid = cv.addWeighted(frame1, v1_weights[frame_count], frame2, v2_weights[frame_count], 0)
-            # change the data type of the frame to uint8
-            frame_overlaid = frame_overlaid.astype(np.uint8)
-            # if the size of frame_ori does not match the target size, put the video in the center of the canvas
-            if frame_overlaid.shape[0] != frame_height1 or frame_overlaid.shape[1] != frame_width1:
-                frame = np.zeros((frame_height1, frame_width1, 3), dtype=np.uint8)
-                x_start = int((frame_width1 - frame_overlaid.shape[1]) / 2)
-                y_start = int((frame_height1 - frame_overlaid.shape[0]) / 2)
-                frame[y_start:y_start + frame_overlaid.shape[0], x_start:x_start + frame_overlaid.shape[1], :] = frame_overlaid
-            else:
-                frame = frame_overlaid
+            frame = frame_overlaid
+        if not CROPONLY:
             # add a box at the top right corner
             if frame_count < int(change_time * fps1):
                 frame[:120, -120:, :] = 128
@@ -212,12 +239,14 @@ def overlay_two_videos(dir_parent, dir_output, pair, MODE, change_time=120, max_
                 frame[:120, -120:, :] = 0
             else:
                 frame[:120, -120:, :] = 255
-            # write the frame into the output video
-            out.write(frame)
-            frame_count += 1
-        cap1.release()
-        cap2.release()
-        out.release()
+        # write the frame into the output video
+        out.write(frame)
+        frame_count += 1
+    cap1.release()
+    cap2.release()
+    out.release()
+    if CROPONLY:
+        rescale_480(output_path, output_path[:-4] + '_480.avi')
 
 
 def get_nb_prepend_frames(nb_vid_frames, fs, force=False):
@@ -386,7 +415,9 @@ ap.add_argument('-pp', '--prepend', action='store_true',
 ap.add_argument('-ct', '--concat', action='store_true',
     help='Include if concatenate the prepended videos')
 ap.add_argument('-cobj', '--cropobj', action='store_true',
-    help='Include if crop the object from the video')
+    help='Include if crop the object from the video and then overlay the two videos in each pair')
+ap.add_argument('-cobjo', '--cropobjonly', action='store_true',
+    help='Include if only need to crop the object from the video for feature extraction')
 ap.add_argument("-dl", "--detectlabel", type=int, default=0,
 	help="class of objects to be detected (default: 0 -> person)")
 ap.add_argument("-maxt", "--maxtime", type=int, default=600,
@@ -412,9 +443,9 @@ dir_parent = 'videos/ORI/'
 
 extract_box_info_folder(dir_parent, video_dict, args)
 
-overlayed_output = 'videos/OVERLAY/pairs/'
-if not os.path.exists(overlayed_output):
-    os.makedirs(overlayed_output)
+overlay_output = 'videos/OVERLAY/pairs/'
+if not os.path.exists(overlay_output):
+    os.makedirs(overlay_output)
 prepend_output = 'videos/OVERLAY/prepend/'
 if not os.path.exists(prepend_output):
     os.makedirs(prepend_output)
@@ -424,23 +455,18 @@ if not os.path.exists(concat_output):
 
 if args["overlay"]:
     video_pairs = generate_video_pairs(dir_parent, video_dict)
-    if args["cropobj"]:
-        for pair in video_pairs:
-            # find the box info for the two videos in the pair
-            v1_box_path = 'videos/OVERLAY/box_info/' + pair[0][:2] + '_box_info_raw.pkl'
-            v2_box_path = 'videos/OVERLAY/box_info/' + pair[1][:2] + '_box_info_raw.pkl'
-            v1_box_info, v2_box_info, target_size = boxes_update_pair(v1_box_path, v2_box_path)
-            overlay_two_videos(dir_parent, overlayed_output, pair, MODE=0, change_time=120, max_time=args["maxtime"], w1=0.5, w2=0.5, target_size=target_size, v1_box_info=v1_box_info, v2_box_info=v2_box_info)
-            overlay_two_videos(dir_parent, overlayed_output, pair, MODE=1, change_time=120, max_time=args["maxtime"], w1=0.5, w2=0.5, target_size=target_size, v1_box_info=v1_box_info, v2_box_info=v2_box_info)
-    else:
-        for pair in video_pairs:
-            overlay_two_videos(dir_parent, overlayed_output, pair, MODE=0, max_time=args["maxtime"], w1=0.5, w2=0.5)
-            overlay_two_videos(dir_parent, overlayed_output, pair, MODE=1, max_time=args["maxtime"], w1=0.5, w2=0.5)
-overlayed_video_list = [video for video in os.listdir(overlayed_output) if video.endswith('.avi')]
+    for pair in video_pairs:
+        v1_box_path = 'videos/OVERLAY/box_info/' + pair[0][:2] + '_box_info_raw.pkl'
+        v2_box_path = 'videos/OVERLAY/box_info/' + pair[1][:2] + '_box_info_raw.pkl'
+        v1_box_info, v2_box_info, target_size = boxes_update_pair(v1_box_path, v2_box_path) if args["cropobj"] or args["cropobjonly"] else (None, None, None)
+        crop_only = True if args["cropobjonly"] else False
+        overlay_two_videos(dir_parent, overlay_output, pair, MODE=0, change_time=120, max_time=args["maxtime"], w1=0.5, w2=0.5, target_size=target_size, v1_box_info=v1_box_info, v2_box_info=v2_box_info, CROPONLY=crop_only)
+        overlay_two_videos(dir_parent, overlay_output, pair, MODE=1, change_time=120, max_time=args["maxtime"], w1=0.5, w2=0.5, target_size=target_size, v1_box_info=v1_box_info, v2_box_info=v2_box_info, CROPONLY=crop_only)
+overlayed_video_list = [video for video in os.listdir(overlay_output) if video.endswith('.avi')]
 
 if args["prepend"]:
     for pair in overlayed_video_list:
-        add_prepended_content(overlayed_output, pair, prepend_output)
+        add_prepended_content(overlay_output, pair, prepend_output)
 
 if args["concat"]:
     concat_videos(prepend_output, concat_output, MODE=0)
