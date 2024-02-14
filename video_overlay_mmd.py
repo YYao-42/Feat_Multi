@@ -17,40 +17,9 @@ import pickle
 import copy
 import scipy
 import pandas as pd
-import subprocess
-import mmcv
-import mmengine
-from mmdet.apis import init_detector, inference_detector
+from feutils import object_seg_mmdetection
+from mmdet.apis import init_detector
 from mmdet.utils import register_all_modules
-
-
-def generate_video_pairs(dir_parent, video_dict=None):
-    # list the videos in the video_dict (the keys)
-    if video_dict is not None:
-        video_list = []
-        video_IDs = list(video_dict.keys())
-        for ID in video_IDs:
-            video_list.append([video for video in os.listdir(dir_parent) if video.startswith(ID)][0])
-    else:
-        # list the videos in the directory that do not end with '_drop.mp4'
-        video_list = [video for video in os.listdir(dir_parent) if not video.endswith('_drop.mp4')]
-        # get the number of frames of each video
-        num_frames = []
-        for video in video_list:
-            video_path = dir_parent + video
-            cap = cv.VideoCapture(video_path)
-            if not cap.isOpened():
-                print("Cannot open file")
-                exit()
-            num_frames.append(int(cap.get(cv.CAP_PROP_FRAME_COUNT)))
-            cap.release()
-        # sort the video list based on the number of frames
-        video_list = [x for _, x in sorted(zip(num_frames, video_list))]
-    # divide the video list into pairs
-    video_pairs = []
-    for i in range(0, len(video_list), 2):
-        video_pairs.append([video_list[i], video_list[i + 1]])
-    return video_pairs
 
 
 def extract_box_info_folder(folder_path, video_dict, args):
@@ -111,7 +80,7 @@ def extract_box_info_video(video_path, net, args):
         if not grabbed:
             break
         # Detect objects 
-        boxes, _, elap_OS = vputils.object_seg_mmdetection(frame, net, args)
+        boxes, _, _, elap_OS = object_seg_mmdetection(frame, net, args)
         if len(boxes) > 1:
             print('More than one object detected! Only the first one is kept!')
         if len(boxes) == 0:
@@ -141,21 +110,6 @@ def get_weights(nb_frames, change_time, fps, target_weight, ATT, CROPONLY, chang
             weights[change_start_point:change_start_point + change_duration] = np.linspace(0, target_weight, change_duration)
             weights[change_start_point + change_duration:] = target_weight
     return weights
-
-
-def rescale_480(input_file, output_file):
-    # Build the ffmpeg command to transform the video
-    command = [
-        'ffmpeg',
-        '-i', input_file,
-        '-vf', 'scale=854:480',
-        '-c:a', 'copy',  # Copy audio codec without re-encoding
-        '-c:v', 'libx264',  # Use H.264 video codec
-        '-crf', '23',  # Constant Rate Factor (quality), adjust as needed
-        output_file
-    ]
-    # Execute the ffmpeg command
-    subprocess.run(command, check=True)
 
 
 def overlay_two_videos(dir_parent, dir_output, pair, MODE, change_time=120, max_time=np.inf, w1=0.5, w2=0.5, target_size=None, v1_box_info=None, v2_box_info=None, CROPONLY=False):
@@ -246,18 +200,7 @@ def overlay_two_videos(dir_parent, dir_output, pair, MODE, change_time=120, max_
     cap2.release()
     out.release()
     if CROPONLY:
-        rescale_480(output_path, output_path[:-4] + '_480.avi')
-
-
-def get_nb_prepend_frames(nb_vid_frames, fs, force=False):
-    min = nb_vid_frames // (fs * 60)
-    sec = (nb_vid_frames % (fs * 60)) // fs
-    if sec < 30 or force:
-        target_video_len = (60 * fs) * (min + 1)
-    else:
-        target_video_len = (60 * fs) * (min + 2)
-    nb_frames_left = target_video_len - nb_vid_frames
-    return nb_frames_left
+        vputils.rescale_480(output_path, output_path[:-4] + '_480.avi')
 
 
 def add_prepended_content(merged_output, video_name, prepend_output):
@@ -268,7 +211,7 @@ def add_prepended_content(merged_output, video_name, prepend_output):
     cap = cv.VideoCapture(video_pair_path)
     fps = round(cap.get(cv.CAP_PROP_FPS))
     nb_frame = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
-    nb_frames_left = get_nb_prepend_frames(nb_frame, fps)
+    nb_frames_left = vputils.get_nb_prepend_frames(nb_frame, fps)
     # write video
     fourcc = cv.VideoWriter_fourcc(*'XVID')
     output_path = prepend_output + video_name
@@ -404,10 +347,6 @@ def boxes_update_pair(v1_box_path, v2_box_path):
 
 # construct the argument parse and parse the arguments
 ap = argparse.ArgumentParser()
-# ap.add_argument("-i", "--input", required=True,
-# 	help="path to input video")
-# ap.add_argument("-o", "--output", required=True,
-# 	help="path to output video")
 ap.add_argument('-ol', '--overlay', action='store_true',
     help='Include if overlay the two videos in each pair')
 ap.add_argument('-pp', '--prepend', action='store_true',
@@ -454,7 +393,7 @@ if not os.path.exists(concat_output):
     os.makedirs(concat_output)
 
 if args["overlay"]:
-    video_pairs = generate_video_pairs(dir_parent, video_dict)
+    video_pairs = vputils.generate_video_pairs(dir_parent, video_dict)
     for pair in video_pairs:
         v1_box_path = 'videos/OVERLAY/box_info/' + pair[0][:2] + '_box_info_raw.pkl'
         v2_box_path = 'videos/OVERLAY/box_info/' + pair[1][:2] + '_box_info_raw.pkl'
