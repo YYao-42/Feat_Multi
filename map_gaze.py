@@ -117,6 +117,7 @@ def get_start_end_idx(QR_ifdetected, fs):
     # Save the start and end timings with key as the video name
     start_end_timings = dict(zip(video_sequence, zip(start_idx, end_idx)))
     np.save(path_raw + folder_name + '/start_end_idx.npy', start_end_timings)
+    return start_end_timings
 
 
 def get_video_sequence(path_sequence_file):
@@ -262,7 +263,7 @@ if __name__ == "__main__":
     if os.path.exists(path_raw + folder_name + '/start_end_idx.npy'):
         start_end_dict = np.load(path_raw + folder_name + '/start_end_idx.npy', allow_pickle=True).item()
     else:
-        get_start_end_idx(QR_ifdetected, fs)
+        start_end_dict = get_start_end_idx(QR_ifdetected, fs)
     
     for video in video_sequence:
         video_start_idx = start_end_dict[video][1]+1
