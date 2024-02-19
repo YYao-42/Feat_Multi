@@ -246,10 +246,15 @@ def add_prepended_content(merged_output, video_name, prepend_output):
     out.release()
 
 
-def concat_videos(prepend_dir, concat_dir, MODE):
+def concat_videos(prepend_dir, concat_dir, MODE, RANDOMIZE=True):
     video_to_concat = [video for video in os.listdir(prepend_dir) if video.split('_')[MODE]==video.split('_')[2]]
+    if RANDOMIZE:
+        np.random.shuffle(video_to_concat)
+    video_sequence = [video[:8] for video in video_to_concat]
+    with open(concat_dir + 'Sequence_Trial_' + str(MODE + 1) + '.txt', 'w') as f:
+        for video in video_sequence:
+            f.write(video + '\n')
     output_path = concat_dir + 'Trial_' + str(MODE + 1) + '.avi'
-    video_to_concat.sort()
     video_to_concat = [prepend_dir + video for video in video_to_concat]
     frame_width, frame_height, fps = vputils.get_frame_size_and_fps(video_to_concat[0])
     # initialize writer
@@ -408,6 +413,6 @@ if args["prepend"]:
         add_prepended_content(overlay_output, pair, prepend_output)
 
 if args["concat"]:
-    concat_videos(prepend_output, concat_output, MODE=0)
-    concat_videos(prepend_output, concat_output, MODE=1)
+    concat_videos(prepend_output, concat_output, MODE=0, RANDOMIZE=True)
+    concat_videos(prepend_output, concat_output, MODE=1, RANDOMIZE=True)
 
