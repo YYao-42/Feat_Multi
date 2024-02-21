@@ -148,15 +148,15 @@ def get_video_sequence(path_sequence_file):
     return data
 
 
-def get_gaze_of_each_frame(frame_idx_scene_video, time_array, gaze_df):
-    time_ns = time_array[frame_idx_scene_video]
+def get_gaze_of_each_frame(world_time_ns, gaze_df):
     # find the id in gaze_df where the time is closest to the time_ns
-    gaze_idx = np.argmin(np.abs(gaze_df['timestamp [ns]'] - time_ns))
+    gaze_idx = np.argmin(np.abs(gaze_df['timestamp [ns]'] - world_time_ns))
     gaze = gaze_df.iloc[gaze_idx]
     return gaze
 
 
-def get_gaze(gaze_path, ori_video_path, width_ori, height_ori, start_idx_scene_video, time_array, gaze_points, magic_ratio):
+def get_gaze(gaze_path, ori_video_path, fps_ori, width_ori, height_ori, start_idx_scene_video, time_array, gaze_points, magic_ratio):
+    world_time_ns = time_array[start_idx_scene_video]
     frame_idx = 0
     gaze_list = []
     # Load video from the given path
@@ -169,7 +169,8 @@ def get_gaze(gaze_path, ori_video_path, width_ori, height_ori, start_idx_scene_v
         # Capture frame-by-frame
         ret, _ = cap.read()
         if ret:
-            gaze = get_gaze_of_each_frame(start_idx_scene_video+frame_idx, time_array, gaze_points)
+            world_time_ns = world_time_ns + 1e9/fps_ori
+            gaze = get_gaze_of_each_frame(world_time_ns, gaze_points)
             if gaze['gaze detected on surface']:
                 x_norm = gaze['gaze position on surface x [normalized]']
                 y_norm = gaze['gaze position on surface y [normalized]']
@@ -192,6 +193,7 @@ def get_gaze(gaze_path, ori_video_path, width_ori, height_ori, start_idx_scene_v
 
 
 def visual_gaze(visual_video_path, ori_video_path, fps_ori, width_ori, height_ori, start_idx_scene_video, time_array, gaze_points, magic_ratio):
+    world_time_ns = time_array[start_idx_scene_video]
     frame_idx = 0
     fourcc = cv.VideoWriter_fourcc(*"mp4v")
     writer = cv.VideoWriter(visual_video_path, fourcc, fps_ori, (width_ori, height_ori), True)
@@ -205,7 +207,8 @@ def visual_gaze(visual_video_path, ori_video_path, fps_ori, width_ori, height_or
         # Capture frame-by-frame
         ret, frame = cap.read()
         if ret:
-            gaze = get_gaze_of_each_frame(start_idx_scene_video+frame_idx, time_array, gaze_points)
+            world_time_ns = world_time_ns + 1e9/fps_ori
+            gaze = get_gaze_of_each_frame(world_time_ns, gaze_points)
             if gaze['gaze detected on surface']:
                 x_norm = gaze['gaze position on surface x [normalized]']
                 y_norm = gaze['gaze position on surface y [normalized]']
@@ -232,7 +235,7 @@ def visual_gaze(visual_video_path, ori_video_path, fps_ori, width_ori, height_or
 if __name__ == "__main__":
 
     Pilot_Name = 'Pilot_1'
-    Trial = 2
+    Trial = 1
     fs_ori = 30
     path_raw = 'data/' + Pilot_Name + '/Raw/'
     path_map = 'data/' + Pilot_Name + '/Marker_Mapper/'
@@ -283,7 +286,7 @@ if __name__ == "__main__":
         if os.path.exists(gaze_path):
             print('The gaze file already exists!')
         else:
-            get_gaze(gaze_path, ori_video_path, width_ori, height_ori, video_start_idx, time_array, gaze_points, magic_ratio=1.77/1.12)
+            get_gaze(gaze_path, ori_video_path, fs_ori, width_ori, height_ori, video_start_idx, time_array, gaze_points, magic_ratio=1.77/1.12)
         visual_video_path = path_raw + folder_name + '/' + video + '_gaze.mp4'
         visual_gaze(visual_video_path, ori_video_path, fs_ori, width_ori, height_ori, video_start_idx, time_array, gaze_points, magic_ratio=1.77/1.12)
 
