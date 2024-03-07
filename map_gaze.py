@@ -102,7 +102,27 @@ def find_edge(QR_results, UP=True):
     return sorted(data_cleaned_idx)
 
 
-def get_start_end_idx(QR_results, fs_ori):
+def show_surrounding_frames(video_path, frame_idx, title):
+    vid = cv.VideoCapture(video_path)
+    figure, ax = plt.subplots(2, 5, sharey=True)
+    for x in range(2):
+        for y in range(5):
+            frame_nb = frame_idx + x*5 + y - 4 
+            vid.set(cv.CAP_PROP_POS_FRAMES, frame_nb)
+            _, frame = vid.read()
+            ax[x,y].imshow(frame)
+            ax[x,y].axis('off')
+            if x*5 + y == 4:
+                ax[x,y].set_title(str(frame_nb), color='red')
+            else:
+                ax[x,y].set_title(str(frame_nb))
+    figure.tight_layout()
+    figure.suptitle(title)
+    plt.show()
+    return
+    
+
+def get_start_end_idx(QR_results, fs_ori, video_sequence, path_visual_QR):
     '''
     Get the start and end timings of the presence of QR code in the scene video using function find_edge.
     Make adjustments based on whether the time of the presence of QR codes is consistent with expectations.
@@ -112,7 +132,7 @@ def get_start_end_idx(QR_results, fs_ori):
     end_idx = find_edge(QR_results, UP=False)
     assert len(start_idx) == len(end_idx) == nb_videos, "The number of start and end timings should be the same as the number of videos!"
     # check whether the distance between the start and end matches the number of the prepended frames
-    for i in range(nb_videos):
+    for i in range(nb_videos):        
         video = video_sequence[i]
         video_id = video.split('_')[0]
         feature_path = 'features/' + video_id + '_mask.pkl'
@@ -127,6 +147,8 @@ def get_start_end_idx(QR_results, fs_ori):
         print('Do you want to adjust the start and end timings?')
         print('If yes, please input the new start and end timings (format: start_idx,end_idx)')
         print('If no, please input "no"')
+        show_surrounding_frames(path_visual_QR, start_idx[i], 'Starting Frames')
+        show_surrounding_frames(path_visual_QR, end_idx[i], 'Ending Frames')
         user_input = input()
         if user_input != 'no':
             start_idx[i], end_idx[i] = tuple(map(int, user_input.split(',')))
@@ -148,14 +170,23 @@ def get_video_sequence(path_sequence_file):
     return data
 
 
-def get_gaze_of_each_frame(world_time_ns, gaze_df):
+def get_gaze_of_each_frame(world_time_ns, gaze_df, fixations_df=None, fs=None):
+    gaze_time = gaze_df['timestamp [ns]']
     # find the id in gaze_df where the time is closest to the time_ns
-    gaze_idx = np.argmin(np.abs(gaze_df['timestamp [ns]'] - world_time_ns))
+    gaze_idx = np.argmin(np.abs(gaze_time - world_time_ns))
     gaze = gaze_df.iloc[gaze_idx]
-    return gaze
+    if fixations_df is not None:
+        fixation_endtime = fixations_df['end timestamp [ns]']
+        # find the id in fixations_df where the time is closest to the time_ns
+        fixation_end_idx = np.argmin(np.abs(fixation_endtime - world_time_ns))
+        fixation_end = fixations_df.iloc[fixation_end_idx]
+        saccade =  np.abs(gaze['timestamp [ns]'] - fixation_end['end timestamp [ns]']) < 1e9/fs/2
+    else:
+        saccade = None
+    return gaze, saccade
 
 
-def get_gaze(gaze_path, ori_video_path, fps_ori, width_ori, height_ori, start_idx_scene_video, time_array, gaze_points, magic_ratio):
+def get_gaze(gaze_path, ori_video_path, fps_ori, width_ori, height_ori, start_idx_scene_video, time_array, gaze_points, fixations, magic_ratio):
     world_time_ns = time_array[start_idx_scene_video]
     frame_idx = 0
     gaze_list = []
@@ -170,7 +201,7 @@ def get_gaze(gaze_path, ori_video_path, fps_ori, width_ori, height_ori, start_id
         ret, _ = cap.read()
         if ret:
             world_time_ns = world_time_ns + 1e9/fps_ori
-            gaze = get_gaze_of_each_frame(world_time_ns, gaze_points)
+            gaze, saccade = get_gaze_of_each_frame(world_time_ns, gaze_points, fixations, fs_ori)
             if gaze['gaze detected on surface']:
                 x_norm = gaze['gaze position on surface x [normalized]']
                 y_norm = gaze['gaze position on surface y [normalized]']
@@ -182,7 +213,7 @@ def get_gaze(gaze_path, ori_video_path, fps_ori, width_ori, height_ori, start_id
             else:
                 print('frame_idx: ', frame_idx, 'gaze not on surface')
                 x = y = None
-            gaze_list.append((x, y))
+            gaze_list.append((x, y, saccade))
             frame_idx += 1
         else:
             break
@@ -208,7 +239,7 @@ def visual_gaze(visual_video_path, ori_video_path, fps_ori, width_ori, height_or
         ret, frame = cap.read()
         if ret:
             world_time_ns = world_time_ns + 1e9/fps_ori
-            gaze = get_gaze_of_each_frame(world_time_ns, gaze_points)
+            gaze, _ = get_gaze_of_each_frame(world_time_ns, gaze_points)
             if gaze['gaze detected on surface']:
                 x_norm = gaze['gaze position on surface x [normalized]']
                 y_norm = gaze['gaze position on surface y [normalized]']
@@ -234,15 +265,16 @@ def visual_gaze(visual_video_path, ori_video_path, fps_ori, width_ori, height_or
 
 if __name__ == "__main__":
 
-    Pilot_Name = 'Pilot_1'
+    Pilot_Name = 'Pilot_6'
     Trial = 1
+    REGENERATE = False
     fs_ori = 30
     path_raw = 'data/' + Pilot_Name + '/Raw/'
     path_map = 'data/' + Pilot_Name + '/Marker_Mapper/'
     path_sequence_file = '../../Experiments/data/Two_Obj/Overlay/' + Pilot_Name + '/Sequence_Trial_' + str(Trial) + '.txt'
     video_sequence = get_video_sequence(path_sequence_file)
     nb_videos = len(video_sequence)
-
+ 
     # Get the section id
     section_info = pd.read_csv(path_raw + 'sections.csv')
     # Sort the section_info by the start time
@@ -257,7 +289,8 @@ if __name__ == "__main__":
     # Get the mapped gaze points
     gaze_points = pd.read_csv(path_map + 'gaze.csv')
     gaze_points = gaze_points[gaze_points['section id'] == section_id]
-    timeline_gaze = gaze_points['timestamp [ns]'].values
+    # Get fixation points
+    fixation_points = pd.read_csv(path_map + 'fixations.csv')
 
     # Detect the QR code in the scene video
     path_scene_video = [path_raw + folder_name + '/' + f for f in os.listdir(path_raw + folder_name) if f.endswith('.mp4')][0]
@@ -271,10 +304,10 @@ if __name__ == "__main__":
         width_scene, height_scene, fps_scene = get_frame_size_and_fps(path_scene_video)
         QR_result = visual_QR_codes(path_visual_QR, path_scene_video, path_index, fps_scene, width_scene, height_scene)
     # Find the start and end timings
-    if os.path.exists(path_raw + folder_name + '/start_end_idx.npy'):
+    if os.path.exists(path_raw + folder_name + '/start_end_idx.npy') and not REGENERATE:
         start_end_dict = np.load(path_raw + folder_name + '/start_end_idx.npy', allow_pickle=True).item()
     else:
-        start_end_dict = get_start_end_idx(QR_result, fs_ori)
+        start_end_dict = get_start_end_idx(QR_result, fs_ori, video_sequence, path_visual_QR)
     
     for video in video_sequence:
         video_start_idx = start_end_dict[video][1] + 1
@@ -283,12 +316,12 @@ if __name__ == "__main__":
         width_ori, height_ori, _ = get_frame_size_and_fps(ori_video_path)
         gaze_path = '../../Experiments/data/Two_Obj/Overlay/' + Pilot_Name + '/' + video + '_gaze.npy'
         # check if the file exists
-        if os.path.exists(gaze_path):
+        if os.path.exists(gaze_path) and not REGENERATE:
             print('The gaze file already exists!')
         else:
-            get_gaze(gaze_path, ori_video_path, fs_ori, width_ori, height_ori, video_start_idx, time_array, gaze_points, magic_ratio=1.77/1.12)
-        visual_video_path = path_raw + folder_name + '/' + video + '_gaze.mp4'
-        visual_gaze(visual_video_path, ori_video_path, fs_ori, width_ori, height_ori, video_start_idx, time_array, gaze_points, magic_ratio=1.77/1.12)
+            get_gaze(gaze_path, ori_video_path, fs_ori, width_ori, height_ori, video_start_idx, time_array, gaze_points, fixation_points, magic_ratio=1.77/1.12)
+        # visual_video_path = path_raw + folder_name + '/' + video + '_gaze.mp4'
+        # visual_gaze(visual_video_path, ori_video_path, fs_ori, width_ori, height_ori, video_start_idx, time_array, gaze_points, magic_ratio=1.77/1.12)
 
     
 
