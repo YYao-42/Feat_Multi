@@ -95,7 +95,7 @@ def find_edge(QR_results, UP=True):
     data_T_idx = np.where(data_TF)[0]
     data_cleaned_idx = [data_T_idx[0]] 
     for i in data_T_idx:
-        if (time_ms[i] - time_ms[data_cleaned_idx[-1]])/1000 > 200: # as we know that the shortest video is 4 minutes long
+        if (time_ms[i] - time_ms[data_cleaned_idx[-1]])/1000 > 235: # as we know that the shortest video is 4 minutes long
             data_cleaned_idx.append(i)
     if UP == False:
         data_cleaned_idx = len(data_TF) - np.array(data_cleaned_idx) - 1
@@ -130,6 +130,10 @@ def get_start_end_idx(QR_results, fs_ori, video_sequence, path_visual_QR):
     time_ms = np.array(QR_results['timestamps'])
     start_idx = find_edge(QR_results, UP=True)
     end_idx = find_edge(QR_results, UP=False)
+    # remove elments in both start_idx and end_idx
+    start_idx_update = [x for x in start_idx if x not in end_idx]
+    end_idx = [x for x in end_idx if x not in start_idx]
+    start_idx = start_idx_update
     assert len(start_idx) == len(end_idx) == nb_videos, "The number of start and end timings should be the same as the number of videos!"
     # check whether the distance between the start and end matches the number of the prepended frames
     for i in range(nb_videos):        
@@ -170,7 +174,7 @@ def get_video_sequence(path_sequence_file):
     return data
 
 
-def get_gaze_of_each_frame(world_time_ns, gaze_df, fixations_df=None, fs=None):
+def get_gaze_of_each_frame(world_time_ns, gaze_df, fixations_df=None, blink_df=None, fs=None):
     gaze_time = gaze_df['timestamp [ns]']
     # find the id in gaze_df where the time is closest to the time_ns
     gaze_idx = np.argmin(np.abs(gaze_time - world_time_ns))
@@ -183,10 +187,16 @@ def get_gaze_of_each_frame(world_time_ns, gaze_df, fixations_df=None, fs=None):
         saccade =  np.abs(gaze['timestamp [ns]'] - fixation_end['end timestamp [ns]']) < 1e9/fs/2
     else:
         saccade = None
-    return gaze, saccade
+    if blink_df is not None:
+        blink_starttime = blink_df['start timestamp [ns]']
+        blink_endtime = blink_df['end timestamp [ns]']
+        blink = np.any(np.logical_and(world_time_ns > blink_starttime, world_time_ns < blink_endtime))
+    else:
+        blink = None
+    return gaze, saccade, blink
 
 
-def get_gaze(gaze_path, ori_video_path, fps_ori, width_ori, height_ori, start_idx_scene_video, time_array, gaze_points, fixations, magic_ratio):
+def get_gaze(gaze_path, ori_video_path, fps_ori, width_ori, height_ori, start_idx_scene_video, time_array, gaze_points, fixations, blinks, magic_ratio):
     world_time_ns = time_array[start_idx_scene_video]
     frame_idx = 0
     gaze_list = []
@@ -201,7 +211,7 @@ def get_gaze(gaze_path, ori_video_path, fps_ori, width_ori, height_ori, start_id
         ret, _ = cap.read()
         if ret:
             world_time_ns = world_time_ns + 1e9/fps_ori
-            gaze, saccade = get_gaze_of_each_frame(world_time_ns, gaze_points, fixations, fs_ori)
+            gaze, saccade, blink = get_gaze_of_each_frame(world_time_ns, gaze_points, fixations, blinks, fs_ori)
             if gaze['gaze detected on surface']:
                 x_norm = gaze['gaze position on surface x [normalized]']
                 y_norm = gaze['gaze position on surface y [normalized]']
@@ -213,7 +223,7 @@ def get_gaze(gaze_path, ori_video_path, fps_ori, width_ori, height_ori, start_id
             else:
                 print('frame_idx: ', frame_idx, 'gaze not on surface')
                 x = y = None
-            gaze_list.append((x, y, saccade))
+            gaze_list.append((x, y, saccade, blink))
             frame_idx += 1
         else:
             break
@@ -265,9 +275,9 @@ def visual_gaze(visual_video_path, ori_video_path, fps_ori, width_ori, height_or
 
 if __name__ == "__main__":
 
-    Pilot_Name = 'Pilot_6'
-    Trial = 1
-    REGENERATE = False
+    Pilot_Name = 'Pilot_14'
+    Trial = 2
+    REGENERATE = True
     fs_ori = 30
     path_raw = 'data/' + Pilot_Name + '/Raw/'
     path_map = 'data/' + Pilot_Name + '/Marker_Mapper/'
@@ -291,6 +301,8 @@ if __name__ == "__main__":
     gaze_points = gaze_points[gaze_points['section id'] == section_id]
     # Get fixation points
     fixation_points = pd.read_csv(path_map + 'fixations.csv')
+    # Get blink points
+    blink_points = pd.read_csv(path_raw + folder_name + '/blinks.csv')
 
     # Detect the QR code in the scene video
     path_scene_video = [path_raw + folder_name + '/' + f for f in os.listdir(path_raw + folder_name) if f.endswith('.mp4')][0]
@@ -304,7 +316,7 @@ if __name__ == "__main__":
         width_scene, height_scene, fps_scene = get_frame_size_and_fps(path_scene_video)
         QR_result = visual_QR_codes(path_visual_QR, path_scene_video, path_index, fps_scene, width_scene, height_scene)
     # Find the start and end timings
-    if os.path.exists(path_raw + folder_name + '/start_end_idx.npy') and not REGENERATE:
+    if os.path.exists(path_raw + folder_name + '/start_end_idx.npy'):
         start_end_dict = np.load(path_raw + folder_name + '/start_end_idx.npy', allow_pickle=True).item()
     else:
         start_end_dict = get_start_end_idx(QR_result, fs_ori, video_sequence, path_visual_QR)
@@ -319,7 +331,7 @@ if __name__ == "__main__":
         if os.path.exists(gaze_path) and not REGENERATE:
             print('The gaze file already exists!')
         else:
-            get_gaze(gaze_path, ori_video_path, fs_ori, width_ori, height_ori, video_start_idx, time_array, gaze_points, fixation_points, magic_ratio=1.77/1.12)
+            get_gaze(gaze_path, ori_video_path, fs_ori, width_ori, height_ori, video_start_idx, time_array, gaze_points, fixation_points, blink_points, magic_ratio=1.77/1.12)
         # visual_video_path = path_raw + folder_name + '/' + video + '_gaze.mp4'
         # visual_gaze(visual_video_path, ori_video_path, fs_ori, width_ori, height_ori, video_start_idx, time_array, gaze_points, magic_ratio=1.77/1.12)
 
