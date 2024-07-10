@@ -141,13 +141,14 @@ def HOOF(magnitude, angle, nb_bins, mask=None, fuzzy=False, normalize=False):
 	return hist
 
 
-def object_seg_mmdetection(frame, net, args):
+def object_seg_mmdetection(frame, net, args, FULLMASK=False):
 	'''
 	Use pretrained Mask R-CNN network to perform object segmentation
 	Inputs:
 	frame: current frame
 	net: mask r-cnn net for object segmentation (using mmdetection package)
 	args: pre-defined parameters
+	FULLMASK: whether return the full mask or the mask in the bounding box. Default is False.
 	Outputs:
 	boxes: boxes of the detected objects
 	confidences: confidences of detected objects 
@@ -163,7 +164,10 @@ def object_seg_mmdetection(frame, net, args):
 	bboxes = bboxes.cpu().numpy().astype(int)
 	masks = masks.cpu().numpy()
 	scores = scores.cpu().numpy()
-	masks_list = [masks[i,bboxes[i,1]:bboxes[i,3],bboxes[i,0]:bboxes[i,2]] for i in range(masks.shape[0])]
+	if FULLMASK:
+		masks_list = [masks[i,:,:] for i in range(masks.shape[0])]
+	else:
+		masks_list = [masks[i,bboxes[i,1]:bboxes[i,3],bboxes[i,0]:bboxes[i,2]] for i in range(masks.shape[0])]
 	scores_list = [scores[i] for i in range(scores.shape[0])]
 	bboxes_H = bboxes[:,3] - bboxes[:,1]
 	bboxes_W = bboxes[:,2] - bboxes[:,0]
@@ -176,12 +180,11 @@ def object_seg_mmdetection(frame, net, args):
 	return bboxes_list, masks_list, scores_list, elap
 
 
-def optical_flow_FB(frame, frame_prev, nb_bins=8):
+def optical_flow_FB(frame, frame_prev):
 	'''
 	Inputs:
 	frame: current frame
 	frame_prev: previous frame
-	nb_bins: number of bins (for Histogram of Oriented Optical Flow)
 	Outputs:
 	hist: orientation histogram
 	box_info: NaN (Keep here just to have the same number of outputs as optical_flow_box)
@@ -201,26 +204,17 @@ def optical_flow_FB(frame, frame_prev, nb_bins=8):
 	# magnitude, angle = cv.cartToPolar(flow_horizontal, flow_vertical, angleInDegrees=False)
 	magnitude = np.absolute(flow_horizontal+1j*flow_vertical)
 	angle = np.angle(flow_horizontal+1j*flow_vertical)
-	mag = []
-	mag.append([
-		magnitude.mean(), # avg magnitude
-		flow_horizontal[flow_horizontal >= 0].mean(),  # up
-		flow_horizontal[flow_horizontal <= 0].mean(),  # down
-		flow_vertical[flow_vertical <= 0].mean(),  # left
-		flow_vertical[flow_vertical >= 0].mean()  # right
-	])
-	mag = np.asarray(mag)
-	hist = HOOF(magnitude, angle, nb_bins, fuzzy=False, normalize=False)
-	box_info = np.full((1, 4), np.nan)
+	magnitude_3D = np.expand_dims(magnitude, axis=-1)
+	angle_3D = np.expand_dims(angle, axis=-1)
 	hsv = np.zeros_like(frame)
 	hsv[..., 0] = angle*180/np.pi/2
 	hsv[..., 1] = 255
 	hsv[..., 2] = cv.normalize(magnitude, None, 0, 255, cv.NORM_MINMAX)
 	frame_OF = cv.cvtColor(hsv, cv.COLOR_HSV2BGR)
-	cv.imshow("object detection + optical flow", frame_OF)
+	cv.imshow("optical flow", frame_OF)
 	end = time.time()
 	elap = end - start
-	return hist, box_info, mag, frame_OF, elap
+	return magnitude_3D, angle_3D, frame_OF, elap
 
 
 def optical_flow_mask(frame, frame_prev, boxes, confidences, masks, detect_label='person', oneobject=True, nb_bins=8, ratio=2):
