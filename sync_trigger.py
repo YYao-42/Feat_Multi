@@ -3,6 +3,8 @@ This script is used to present the video stimuli and send triggers to EEG record
 The video stimuli are presented in a full screen mode.
 The trigger to the EEG recorder is sent via a serial port, and the event to NEON is sent via NEON's real-time API.
 The trigger and event are scheduled to be sent once per minute.
+
+Before running the script, make sure that the serial port is connected to the EEG recorder and the NEON is connected to the same network as the PC. Check whether the video path, serial port and the IP address are correct.
         
 Author: yuanyuan.yao@kuleuven.be
 '''
@@ -59,7 +61,7 @@ serial_trigger = int(1)
 nest_asyncio.apply()
 # device = discover_one_device()
 # If doesn't work, try to set the IP manually
-ip = "192.168.137.55"
+ip = "192.168.137.91"
 device = Device(address=ip, port="8080")
 if device is None:
     print("No device found.")
@@ -83,8 +85,9 @@ time.sleep(3)
 # creating vlc media player object
 vlc_instance = vlc.Instance(['--video-on-top'])
 media_player = vlc_instance.media_player_new()
-media = vlc.Media("videos/prepend/01_05_MODE_0.avi")
+# media = vlc.Media("videos/prepend/01_05_MODE_0.avi")
 # media = vlc.Media("videos/video_test_size_120_fps_30_len_7.avi")
+media = vlc.Media("videos/OVERLAY/concat/Trial_2.avi")
 media_player.set_media(media)
 media_player.set_fullscreen(True)
 
