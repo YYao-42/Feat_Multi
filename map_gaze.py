@@ -249,7 +249,7 @@ def visual_gaze(visual_video_path, ori_video_path, fps_ori, width_ori, height_or
         ret, frame = cap.read()
         if ret:
             world_time_ns = world_time_ns + 1e9/fps_ori
-            gaze, _ = get_gaze_of_each_frame(world_time_ns, gaze_points)
+            gaze, _, _ = get_gaze_of_each_frame(world_time_ns, gaze_points)
             if gaze['gaze detected on surface']:
                 x_norm = gaze['gaze position on surface x [normalized]']
                 y_norm = gaze['gaze position on surface y [normalized]']
@@ -275,8 +275,8 @@ def visual_gaze(visual_video_path, ori_video_path, fps_ori, width_ori, height_or
 
 if __name__ == "__main__":
 
-    Pilot_Name = 'Pilot_14'
-    Trial = 2
+    Pilot_Name = 'Pilot_1'
+    Trial = 1
     REGENERATE = True
     fs_ori = 30
     path_raw = 'data/' + Pilot_Name + '/Raw/'
