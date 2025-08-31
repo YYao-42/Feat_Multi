@@ -10,10 +10,10 @@ from mmdet.apis import init_detector
 
 # construct the argument parse and parse the arguments
 ap = argparse.ArgumentParser()
-ap.add_argument("-i", "--input", required=True,
-	help="path to input video")
-ap.add_argument("-o", "--output", required=True,
-	help="path to output video")
+ap.add_argument("-vn", "--videoname", required=True,
+	help="name of the video")
+ap.add_argument("-fn", "--featurename", required=True,
+	help="name of the feature to be extracted")
 ap.add_argument("-dl", "--detectlabel", type=int, default=0,
 	help="class of objects to be detected (default: 0 -> person)")
 ap.add_argument("-nb", "--nbins", type=int, default=8,
@@ -37,9 +37,13 @@ net = init_detector(config_file, checkpoint_file, device='cuda:0')  # or device=
 
 # initialize the video stream, pointer to output video file, and
 # frame dimensions
-video_path = args["input"]
-video_name = video_path.split('/')[-1]
+video_folder = rf"C:\Users\Gebruiker\Documents\Experiments\downsamp_video"
+video_name = args["videoname"]
 video_id = video_name.split('_')[0]
+video_path = os.path.join(video_folder, video_name)
+video_path_output = os.path.join(video_folder, video_name.split('.')[0] + '_output.mp4')
+feature_name = args["featurename"]
+
 vs = cv2.VideoCapture(video_path)
 writer = None
 (W, H) = (None, None)
@@ -58,11 +62,18 @@ feature_list = []
 
 # First frame
 grabbed, frame_prev = vs.read()
-hist_mtx = np.zeros((1, args["nbins"]))
-box_mtx = np.zeros((1, 4))
-mag_mtx = np.zeros((1, 5))
-tc_mtx = np.zeros((1, 3))
-feat_1st = np.zeros((1, args["nbins"]+4+5+3))
+if feature_name == 'ObjFlow':
+	feat_1st = np.zeros((1, args["nbins"]+4+5)) # histogram + box info (xc, yc, w, h) + motion info (avg, u, d, l, r)
+elif feature_name == 'ObjTempCtr':
+	feat_1st = np.zeros((1, 3))
+elif feature_name == 'ObjRMSCtr':
+	bboxes_list, masks_list, scores_list, _ = feutils.object_seg_mmdetection(frame_prev, net, args)
+	feat_1st, _ = feutils.obj_rms_contrast(frame_prev, bboxes_list, scores_list, masks_list, oneobject=True, ratio=2, ifmask=True)
+elif feature_name == 'RMSCtr':
+	feat_1st, _ = feutils.cal_rms_contrast(frame_prev)
+else:
+	raise ValueError('Feature name not recognized!')
+
 feature_list.append(feat_1st)
 
 # loop over frames from the video file stream
@@ -76,39 +87,62 @@ while True:
 	# if the frame dimensions are empty, grab them
 	if W is None or H is None:
 		H, W = frame.shape[:2]
-	# Detect objects 
-	bboxes_list, masks_list, scores_list, elap_OS = feutils.object_seg_mmdetection(frame, net, args)
-	# Compute the optical flow of the most confidenet detected object
-	feature_flow, frame_OF, elap_OF = feutils.optical_flow_mask(frame, frame_prev, bboxes_list, scores_list, masks_list, oneobject=True, nb_bins=8)
-	feature_tc, elap_TC = feutils.obj_temp_contrast(frame, frame_prev, bboxes_list, scores_list, masks_list, oneobject=True, ifmask=True)
-	feature_boxes = np.concatenate((feature_flow, feature_tc), axis=1)
-	feature_list.append(feature_boxes)
+	if 'Obj' in feature_name:
+		# Detect objects 
+		bboxes_list, masks_list, scores_list, elap_OS = feutils.object_seg_mmdetection(frame, net, args)
+	else:
+		elap_OS = 0
+	# Extract features
+	if feature_name == 'ObjFlow':
+		feature, frame_OF, elap = feutils.optical_flow_mask(frame, frame_prev, bboxes_list, scores_list, masks_list, oneobject=True, nb_bins=8)
+		# check if the video writer is None
+		if writer is None:
+			# initialize our video writer
+			fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+			writer = cv2.VideoWriter(video_path_output, fourcc, 30,
+				(frame_OF.shape[1], frame_OF.shape[0]), True)
+		# write the output frame to disk
+		writer.write(frame_OF)
+		if cv2.waitKey(1) & 0xFF == ord('q'):
+			break
+	elif feature_name == 'ObjTempCtr':
+		feature, elap = feutils.obj_temp_contrast(frame, frame_prev, bboxes_list, scores_list, masks_list, oneobject=True, ifmask=True)
+	elif feature_name == 'ObjRMSCtr':
+		feature, elap = feutils.obj_rms_contrast(frame, bboxes_list, scores_list, masks_list, oneobject=True, ifmask=True)
+	elif feature_name == 'RMSCtr':
+		feature, elap = feutils.cal_rms_contrast(frame)
+	else: 
+		raise ValueError('Feature name not recognized!')
+	# some information on processing single frame
+	if total > 0:
+		print("[INFO] single frame took {:.4f} seconds".format(elap+elap_OS))
+		print("[INFO] estimated total time to finish: {:.4f}".format((elap+elap_OS) * total))
+	feature_list.append(feature)
 	frame_prev = frame
-	# check if the video writer is None
-	if writer is None:
-		# initialize our video writer
-		fourcc = cv2.VideoWriter_fourcc(*"MJPG")
-		writer = cv2.VideoWriter(args["output"], fourcc, 30,
-			(frame_OF.shape[1], frame_OF.shape[0]), True)
-		# some information on processing single frame
-		if total > 0:
-			print("[INFO] Object segmentation: single frame took {:.4f} seconds".format(elap_OS))
-			print("[INFO] Optical flow: single frame took {:.4f} seconds".format(elap_OF))
-			print("[INFO] Temporal contrast: single frame took {:.4f} seconds".format(elap_TC))
-			print("[INFO] estimated total time to finish: {:.4f}".format((elap_OS+elap_OF+elap_TC) * total))
-	# write the output frame to disk
-	writer.write(frame_OF)
-	if cv2.waitKey(1) & 0xFF == ord('q'):
-		break
+
 print("[INFO] saving features ...")
-# if folder features does not exist, create it
+# create features folder if it doesn't exist
 if not os.path.exists('features'):
-	os.makedirs('features')
-save_path = 'features/' + video_id +'_mask.pkl'
-open_file = open(save_path, "wb")
-pickle.dump(feature_list, open_file)
-open_file.close()
+    os.makedirs('features')
+save_path = os.path.join('features', video_id + '.pkl')
+# try to load existing feature dictionary if file exists and is not empty
+if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
+    try:
+        with open(save_path, "rb") as f:
+            feature_dict = pickle.load(f)
+    except (EOFError, pickle.UnpicklingError):
+        print(f"[WARN] Could not read {save_path}, starting with empty dictionary")
+        feature_dict = {}
+else:
+    feature_dict = {}
+# update with new features
+feature_dict[feature_name] = feature_list
+# save updated dictionary
+with open(save_path, "wb") as f:
+    pickle.dump(feature_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+
 # release the file pointers
 print("[INFO] cleaning up ...")
-writer.release()
+if writer is not None:
+	writer.release()
 vs.release()

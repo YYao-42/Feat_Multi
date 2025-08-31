@@ -7,6 +7,52 @@ import torch
 from mmdet.apis import inference_detector
 
 
+def cal_rms_contrast(frame_gray, mask=None):
+	# Calculate root mean square contrast
+	start = time.time()
+	# if mask is not a None object, then apply mask to the frame:
+	if mask is not None:
+		frame_gray = frame_gray[mask]
+	# change type to float
+	frame_gray = frame_gray.astype(float)
+	rms = np.sqrt(np.mean((frame_gray - np.mean(frame_gray))**2))
+	end = time.time()
+	elap = end - start
+	return rms, elap
+
+
+def obj_rms_contrast(frame, boxes, confidences, masks, oneobject=True, ratio=2, ifmask=True):
+	start = time.time()
+	frame_grey = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+	feature_boxes = []
+	if len(boxes)==0:
+		print('WARNING: No object detected! Adding NaN values to features.')
+		feature_frame = np.full((1, 1), np.nan)
+	else:
+		if oneobject:
+			idxs = [np.argmax(np.array(confidences))]
+		elif len(boxes) > 3: # keep the top 3 objects with highest confidence
+			idxs = np.argsort(np.array(confidences))[-3:]
+		else:
+			idxs = np.argsort(np.array(confidences))
+		for i in idxs:
+			xs, ys, xl, yl, mask = expand_box(boxes[i], masks[i], frame.shape[1], frame.shape[0], ratio=ratio)
+			patch = frame_grey[ys:yl, xs:xl]
+			try:
+				if ifmask:
+					rms, _ = cal_rms_contrast(patch, mask)
+				else:
+					rms, _ = cal_rms_contrast(patch)
+			except:
+				print('WARNING: empty patches!')
+				break
+			feature_boxes.append(rms)
+		feature_frame = np.array(feature_boxes).reshape(-1, 1)
+	end = time.time()
+	elap = end - start
+	return feature_frame, elap
+
+
 def cal_tempcontrast(frame_gray, frame_prev_gray, mask=None):
 	# if mask is not a None object, then apply mask to the frame:
 	if mask is not None:
@@ -22,27 +68,27 @@ def cal_tempcontrast(frame_gray, frame_prev_gray, mask=None):
 	return tempcontr_vec
 
 
-def get_tempcontrast(video_path):
-	vs = cv.VideoCapture(video_path)
-	# First frame
-	grabbed, frame_prev = vs.read()
-	tempcontr_mtx = np.zeros((1, 3))
-	# loop over frames from the video file stream
-	while True:
-		# read the next frame from the file
-		grabbed, frame = vs.read()
-		# if the frame was not grabbed, then we have reached the end
-		# of the stream
-		if not grabbed:
-			break
-		# transform to grayscale
-		frame_prev_gray = cv.cvtColor(frame_prev, cv.COLOR_BGR2GRAY)
-		frame_gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
-		tempcontr_vec = cal_tempcontrast(frame_gray, frame_prev_gray)
-		tempcontr_mtx = np.concatenate((tempcontr_mtx, tempcontr_vec), axis=0)
-		frame_prev = frame
-	vs.release()
-	return tempcontr_mtx
+# def get_tempcontrast(video_path):
+# 	vs = cv.VideoCapture(video_path)
+# 	# First frame
+# 	grabbed, frame_prev = vs.read()
+# 	tempcontr_mtx = np.zeros((1, 3))
+# 	# loop over frames from the video file stream
+# 	while True:
+# 		# read the next frame from the file
+# 		grabbed, frame = vs.read()
+# 		# if the frame was not grabbed, then we have reached the end
+# 		# of the stream
+# 		if not grabbed:
+# 			break
+# 		# transform to grayscale
+# 		frame_prev_gray = cv.cvtColor(frame_prev, cv.COLOR_BGR2GRAY)
+# 		frame_gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+# 		tempcontr_vec = cal_tempcontrast(frame_gray, frame_prev_gray)
+# 		tempcontr_mtx = np.concatenate((tempcontr_mtx, tempcontr_vec), axis=0)
+# 		frame_prev = frame
+# 	vs.release()
+# 	return tempcontr_mtx
 
 
 def obj_temp_contrast(frame, frame_prev, boxes, confidences, masks, oneobject=True, ratio=2, ifmask=True):
