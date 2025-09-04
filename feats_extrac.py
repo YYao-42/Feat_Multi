@@ -64,6 +64,9 @@ feature_list = []
 grabbed, frame_prev = vs.read()
 if feature_name == 'ObjFlow':
 	feat_1st = np.zeros((1, args["nbins"]+4+5)) # histogram + box info (xc, yc, w, h) + motion info (avg, u, d, l, r)
+elif feature_name == 'ObjAcc':
+	feat_1st = np.zeros((1, 5))
+	flow_prev = None
 elif feature_name == 'ObjTempCtr':
 	feat_1st = np.zeros((1, 3))
 elif feature_name == 'ObjRMSCtr':
@@ -71,6 +74,10 @@ elif feature_name == 'ObjRMSCtr':
 	feat_1st, _ = feutils.obj_rms_contrast(frame_prev, bboxes_list, scores_list, masks_list, oneobject=True, ratio=2, ifmask=True)
 elif feature_name == 'RMSCtr':
 	feat_1st, _ = feutils.cal_rms_contrast(frame_prev)
+elif feature_name == 'ObjSize':
+	bboxes_list, masks_list, scores_list, _ = feutils.object_seg_mmdetection(frame_prev, net, args)
+	size = np.sum(masks_list[0]) if len(masks_list) > 0 else np.nan
+	feat_1st = np.array([[size]])
 else:
 	raise ValueError('Feature name not recognized!')
 
@@ -88,8 +95,9 @@ while True:
 	if W is None or H is None:
 		H, W = frame.shape[:2]
 	if 'Obj' in feature_name:
+		FULLMASK = True if feature_name == 'ObjAcc' else False
 		# Detect objects 
-		bboxes_list, masks_list, scores_list, elap_OS = feutils.object_seg_mmdetection(frame, net, args)
+		bboxes_list, masks_list, scores_list, elap_OS = feutils.object_seg_mmdetection(frame, net, args, FULLMASK=FULLMASK)
 	else:
 		elap_OS = 0
 	# Extract features
@@ -105,12 +113,18 @@ while True:
 		writer.write(frame_OF)
 		if cv2.waitKey(1) & 0xFF == ord('q'):
 			break
+	elif feature_name == 'ObjAcc':
+		feature, elap, flow_prev = feutils.optical_acc_mask(frame, frame_prev, flow_prev, bboxes_list, scores_list, masks_list, oneobject=True)
 	elif feature_name == 'ObjTempCtr':
 		feature, elap = feutils.obj_temp_contrast(frame, frame_prev, bboxes_list, scores_list, masks_list, oneobject=True, ifmask=True)
 	elif feature_name == 'ObjRMSCtr':
 		feature, elap = feutils.obj_rms_contrast(frame, bboxes_list, scores_list, masks_list, oneobject=True, ifmask=True)
 	elif feature_name == 'RMSCtr':
 		feature, elap = feutils.cal_rms_contrast(frame)
+	elif feature_name == 'ObjSize':
+		size = np.sum(masks_list[0]) if len(masks_list) > 0 else np.nan
+		feature = np.array([[size]])
+		elap = 0 # negligible
 	else: 
 		raise ValueError('Feature name not recognized!')
 	# some information on processing single frame

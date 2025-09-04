@@ -349,3 +349,62 @@ def optical_flow_mask(frame, frame_prev, boxes, confidences, masks, detect_label
 	elap = end - start
 	return feature_frame, frame_OF, elap
 
+
+def optical_acc_mask(frame, frame_prev, flow_prev, boxes, confidences, masks, oneobject=True, ratio=2):
+	'''
+	Inputs:
+	frame: current frame
+	frame_prev: previous frame
+	boxes: boxes of the detected objects
+	confidences: confidences of detected objects 
+	classIDs: indices of the classes objects belong to; use together with LABELS to get the corresponding labels 
+	masks: masks of the object
+	LABELS: all labels
+	COLORS: colors assigned to labels
+	oneobject: if only select one object with highest confidence
+	Outputs:
+	hist: orientation histogram
+	center_xy: x and y coordinates of the center of the box
+	mag: average magnitude (all direction/left/right/up/down) 
+	frame_OF: modified current frame 
+	elap: processing time
+	'''
+	start = time.time()
+	frame_grey = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+	frame_prev_grey = cv.cvtColor(frame_prev, cv.COLOR_BGR2GRAY)
+	feature_boxes = []
+	if len(boxes)==0:
+		print('WARNING: No object detected! Adding NaN values to features.')
+		feature_frame = np.full((1, 5), np.nan)
+		flow = flow_prev
+	else:
+		if oneobject:
+			idxs = [np.argmax(np.array(confidences))]
+		elif len(boxes) > 3: # keep the top 3 objects with highest confidence
+			idxs = np.argsort(np.array(confidences))[-3:]
+		else:
+			idxs = np.argsort(np.array(confidences))
+		for i in idxs:
+			mask = masks[i]
+			flow = cv.calcOpticalFlowFarneback(frame_prev_grey, frame_grey, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+			acc = flow - flow_prev if flow_prev is not None else np.zeros_like(flow)
+			acc_horizontal = acc[..., 0]
+			acc_vertical = acc[..., 1]
+			# Computes the magnitude and angle of the 2D vectors
+			magnitude = np.absolute(acc_horizontal+1j*acc_vertical)
+			if magnitude.mean() > 1e200:
+				print("ABNORMAL!")
+			mag = []
+			mag.append([
+				magnitude[mask].mean(), # avg magnitude
+				acc_horizontal[np.logical_and(acc_horizontal>=0, mask)].mean(),  # up
+				acc_horizontal[np.logical_and(acc_horizontal<=0, mask)].mean(),  # down
+				acc_vertical[np.logical_and(acc_vertical<=0, mask)].mean(),  # left
+				acc_vertical[np.logical_and(acc_vertical>=0, mask)].mean()  # right
+			])
+			mag = np.asarray(mag)
+			feature_boxes.append(mag)
+		feature_frame = np.concatenate(tuple(feature_boxes), axis=0)
+	end = time.time()
+	elap = end - start
+	return feature_frame, elap, flow
