@@ -15,9 +15,16 @@ def download_and_process_video(url, start_time, end_time, output_name, fps=30):
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # Choose best quality
         'outtmpl': 'video_dl.mp4',  # Output filename
     }
-    # Download video using yt-dlp
-    with yt_dlp.YoutubeDL(options) as ydl:
-        ydl.download([url])
+
+    try:
+        # Download video using yt-dlp
+        with yt_dlp.YoutubeDL(options) as ydl:
+            print(f"[INFO] Downloading: {url}")
+            ydl.download([url])
+    except Exception as e:
+        print(f"[ERROR] Could not download {url}: {e}")
+        return  # Skip this video, continue with the next
+
     # Trim the downloaded video to the specified start and end times using ffmpeg
     subprocess.run(['ffmpeg', '-ss', start_time, '-to', end_time, '-i', 'video_dl.mp4', 'video_trimmed.mp4'])
     # Resample the trimmed video to the specified fps using ffmpeg
