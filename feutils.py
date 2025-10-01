@@ -350,7 +350,7 @@ def optical_flow_mask(frame, frame_prev, boxes, confidences, masks, detect_label
 	return feature_frame, frame_OF, elap
 
 
-def optical_acc_mask(frame, frame_prev, flow_prev, boxes, confidences, masks, oneobject=True, ratio=2):
+def optical_acc_mask(frame, frame_prev, flow_prev, boxes, confidences, masks, oneobject=True):
 	'''
 	Inputs:
 	frame: current frame
@@ -408,3 +408,59 @@ def optical_acc_mask(frame, frame_prev, flow_prev, boxes, confidences, masks, on
 	end = time.time()
 	elap = end - start
 	return feature_frame, elap, flow
+
+
+def update_pool(flow_pool, flow_new):
+	if flow_new is None:
+		flow_new = flow_pool[-1]
+	flow_pool = flow_pool[1:] + [flow_new]
+	return flow_pool
+
+
+def get_acc_window(flow_pool):
+	window_size = len(flow_pool)
+	acc_diff_resolution = []
+	for i in range(window_size//2):
+		acc = (flow_pool[window_size-i-1] - flow_pool[i])/(window_size - 2*i - 1)
+		acc_diff_resolution.append(acc)
+	acc_avg = np.mean(acc_diff_resolution, axis=0)
+	return acc_avg
+
+
+def optical_acc_window_mask(frame, frame_prev, flow_pool, mask_pool, boxes, confidences, masks, window_size=6):
+	start = time.time()
+	frame_grey = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+	frame_prev_grey = cv.cvtColor(frame_prev, cv.COLOR_BGR2GRAY)
+	if flow_pool is None:
+		flow_pool = [np.zeros((frame.shape[0], frame.shape[1], 2))] * window_size
+		mask_pool = [np.zeros((frame.shape[0], frame.shape[1])).astype(bool)] * (window_size+1)
+	if len(boxes)==0:
+		print('WARNING: No object detected! Updating with previous flow and mask.')
+		flow_pool = update_pool(flow_pool, None)
+		mask_pool = update_pool(mask_pool, None)
+	else:
+		i = np.argmax(np.array(confidences))
+		mask_pool = update_pool(mask_pool, masks[i])
+		flow = cv.calcOpticalFlowFarneback(frame_prev_grey, frame_grey, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+		flow_pool = update_pool(flow_pool, flow)
+	acc = get_acc_window(flow_pool)
+
+	acc_horizontal = acc[..., 0]
+	acc_vertical = acc[..., 1]
+	# Computes the magnitude and angle of the 2D vectors
+	magnitude = np.absolute(acc_horizontal+1j*acc_vertical)
+	if magnitude.mean() > 1e200:
+		print("ABNORMAL!")
+	mag = []
+	mask = mask_pool[window_size//2]
+	mag.append([
+		magnitude[mask].mean(), # avg magnitude
+		acc_horizontal[np.logical_and(acc_horizontal>=0, mask)].mean(),  # up
+		acc_horizontal[np.logical_and(acc_horizontal<=0, mask)].mean(),  # down
+		acc_vertical[np.logical_and(acc_vertical<=0, mask)].mean(),  # left
+		acc_vertical[np.logical_and(acc_vertical>=0, mask)].mean()  # right
+	])
+	mag = np.asarray(mag)
+	end = time.time()
+	elap = end - start
+	return mag, elap, flow_pool, mask_pool

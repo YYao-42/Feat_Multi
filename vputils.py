@@ -75,7 +75,7 @@ def rescale_480(input_file, output_file):
     command = [
         'ffmpeg',
         '-i', input_file,
-        '-vf', 'scale=854:480',
+        '-vf', 'scale=854:480,fps=30',  
         '-c:a', 'copy',  # Copy audio codec without re-encoding
         '-c:v', 'libx264',  # Use H.264 video codec
         '-crf', '23',  # Constant Rate Factor (quality), adjust as needed

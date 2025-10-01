@@ -14,6 +14,10 @@ ap.add_argument("-vn", "--videoname", required=True,
 	help="name of the video")
 ap.add_argument("-fn", "--featurename", required=True,
 	help="name of the feature to be extracted")
+ap.add_argument("-vf", "--videofolder", default=rf"C:\Users\Gebruiker\Documents\Experiments\downsamp_video",
+	help="path to the folder that contains the video (default: current folder)")
+ap.add_argument("-ff", "--featurefolder", default="features",
+	help="path to the folder that contains the features (default: features)")
 ap.add_argument("-dl", "--detectlabel", type=int, default=0,
 	help="class of objects to be detected (default: 0 -> person)")
 ap.add_argument("-nb", "--nbins", type=int, default=8,
@@ -37,12 +41,14 @@ net = init_detector(config_file, checkpoint_file, device='cuda:0')  # or device=
 
 # initialize the video stream, pointer to output video file, and
 # frame dimensions
-video_folder = rf"C:\Users\Gebruiker\Documents\Experiments\downsamp_video"
+video_folder = args["videofolder"]
+feature_folder = args["featurefolder"]
 video_name = args["videoname"]
 video_id = video_name.split('_')[0]
 video_path = os.path.join(video_folder, video_name)
 video_path_output = os.path.join(video_folder, video_name.split('.')[0] + '_output.mp4')
 feature_name = args["featurename"]
+FLAG_TERMINATE = False
 
 vs = cv2.VideoCapture(video_path)
 writer = None
@@ -67,6 +73,7 @@ if feature_name == 'ObjFlow':
 elif feature_name == 'ObjAcc':
 	feat_1st = np.zeros((1, 5))
 	flow_prev = None
+	mask_prev = None
 elif feature_name == 'ObjTempCtr':
 	feat_1st = np.zeros((1, 3))
 elif feature_name == 'ObjRMSCtr':
@@ -112,9 +119,12 @@ while True:
 		# write the output frame to disk
 		writer.write(frame_OF)
 		if cv2.waitKey(1) & 0xFF == ord('q'):
+			FLAG_TERMINATE = True
 			break
 	elif feature_name == 'ObjAcc':
-		feature, elap, flow_prev = feutils.optical_acc_mask(frame, frame_prev, flow_prev, bboxes_list, scores_list, masks_list, oneobject=True)
+		# feature, elap, flow_prev = feutils.optical_acc_mask(frame, frame_prev, flow_prev, bboxes_list, scores_list, masks_list, oneobject=True)
+		window_size = 6
+		feature, elap, flow_prev, mask_prev = feutils.optical_acc_window_mask(frame, frame_prev, flow_prev, mask_prev, bboxes_list, scores_list, masks_list, window_size)
 	elif feature_name == 'ObjTempCtr':
 		feature, elap = feutils.obj_temp_contrast(frame, frame_prev, bboxes_list, scores_list, masks_list, oneobject=True, ifmask=True)
 	elif feature_name == 'ObjRMSCtr':
@@ -134,26 +144,31 @@ while True:
 	feature_list.append(feature)
 	frame_prev = frame
 
-print("[INFO] saving features ...")
-# create features folder if it doesn't exist
-if not os.path.exists('features'):
-    os.makedirs('features')
-save_path = os.path.join('features', video_id + '.pkl')
-# try to load existing feature dictionary if file exists and is not empty
-if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
-    try:
-        with open(save_path, "rb") as f:
-            feature_dict = pickle.load(f)
-    except (EOFError, pickle.UnpicklingError):
-        print(f"[WARN] Could not read {save_path}, starting with empty dictionary")
-        feature_dict = {}
-else:
-    feature_dict = {}
-# update with new features
-feature_dict[feature_name] = feature_list
-# save updated dictionary
-with open(save_path, "wb") as f:
-    pickle.dump(feature_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+if feature_name == 'ObjAcc':
+	# compensate for the delay
+	feature_list = feature_list[window_size//2:] + [feature_list[-1]] * (window_size//2)
+
+if not FLAG_TERMINATE:
+	print("[INFO] saving features ...")
+	# create features folder if it doesn't exist
+	if not os.path.exists(feature_folder):
+		os.makedirs(feature_folder)
+	save_path = os.path.join(feature_folder, video_id + '.pkl')
+	# try to load existing feature dictionary if file exists and is not empty
+	if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
+		try:
+			with open(save_path, "rb") as f:
+				feature_dict = pickle.load(f)
+		except (EOFError, pickle.UnpicklingError):
+			print(f"[WARN] Could not read {save_path}, starting with empty dictionary")
+			feature_dict = {}
+	else:
+		feature_dict = {}
+	# update with new features
+	feature_dict[feature_name] = feature_list
+	# save updated dictionary
+	with open(save_path, "wb") as f:
+		pickle.dump(feature_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 # release the file pointers
 print("[INFO] cleaning up ...")
