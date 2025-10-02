@@ -220,7 +220,6 @@ dependencies:
   - typing_extensions=4.3.0=pyha770c72_0
   - ucrt=10.0.20348.0=haa95532_0
   - unicodedata2=15.0.0=py310h8d17308_0
-  - urllib3=1.26.11=pyhd8ed1ab_0
   - vc=14.2=h21ff451_1
   - vs2015_runtime=14.29.30139=h890b9b1_7
   - wcwidth=0.2.5=pyhd3eb1b0_0
@@ -270,6 +269,7 @@ dependencies:
       - mmengine==0.10.3
       - model-index==0.1.11
       - multidict==6.0.4
+      - mutagen==1.47.0
       - opendatalab==0.0.10
       - openmim==0.3.9
       - openxlab==0.0.34
@@ -283,6 +283,7 @@ dependencies:
       - pycares==4.3.0
       - pycocotools==2.0.7
       - pycryptodome==3.20.0
+      - pycryptodomex==3.20.0
       - pygments==2.17.2
       - pynput==1.7.6
       - pyserial==3.5
@@ -290,7 +291,7 @@ dependencies:
       - pytz==2023.3.post1
       - pyzbar==0.1.9
       - regex==2023.12.25
-      - requests==2.28.2
+      - requests==2.31.0
       - rich==13.4.2
       - setuptools==60.2.0
       - shapely==2.0.2
@@ -302,9 +303,11 @@ dependencies:
       - tqdm==4.65.2
       - tzdata==2023.3
       - tzlocal==5.0.1
-      - websockets==11.0.3
+      - urllib3==2.2.0
+      - websockets==12.0
       - yapf==0.40.2
       - yarg==0.1.9
       - yarl==1.9.2
+      - yt-dlp==2025.9.26
       - zeroconf==0.108.0
 prefix: C:\Users\Gebruiker\anaconda3\envs\cvpanda
