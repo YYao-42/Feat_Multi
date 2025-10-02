@@ -1,6 +1,9 @@
 import numpy as np
 import cv2 as cv
 import os
+import copy
+import scipy
+import pandas as pd
 import subprocess
 
 def get_frame_size_and_fps(video_path):
@@ -96,3 +99,39 @@ def get_nb_prepend_frames(nb_vid_frames, fs, force=False):
     return nb_frames_left
 
 
+def expand_boxes(target_height, target_width, ori_height, ori_width, ori_x_start, ori_y_start, ori_frame_height, ori_frame_width):
+    target_height = min(target_height, ori_frame_height)
+    target_width = min(target_width, ori_frame_width)
+    # expand the boxes to the size of the canvas, with the center of the box unchanged
+    new_x_start = int(max(0, ori_x_start - (target_width - ori_width) / 2))
+    new_y_start = int(max(0, ori_y_start - (target_height - ori_height) / 2))
+    new_x_end = min(ori_frame_width, new_x_start + target_width)
+    new_y_end = min(ori_frame_height, new_y_start + target_height)
+    # adjust the start coordinates if the end coordinates are out of the frame
+    new_x_start = new_x_end - target_width
+    new_y_start = new_y_end - target_height
+    assert new_x_start >= 0 and new_y_start >= 0, 'New box out of frame!'
+    new_box_info = [new_x_start, new_y_start, target_width, target_height]
+    center_xy = [new_x_start + target_width / 2, new_y_start + target_height / 2]
+    return new_box_info, center_xy
+
+
+def clean_boxes_info(box_info, fps, smooth=True):
+    y = copy.deepcopy(box_info)
+    _, nb_col = y.shape
+    for i in range(nb_col):
+        # interpolate NaN values (linearly)
+        nans, x= np.isnan(y[:,i]), lambda z: z.nonzero()[0]
+        if any(nans):
+            f1 = scipy.interpolate.interp1d(x(~nans), y[:,i][~nans], fill_value='extrapolate')
+            y[:,i][nans] = f1(x(nans))
+        # find outliers and replace them with interpolated values
+        # outliers are defined as values that are more than 3 standard deviations away from the mean
+        outliers = np.abs(y[:,i] - np.mean(y[:,i])) > 3*np.std(y[:,i])
+        if any(outliers):
+            f1 = scipy.interpolate.interp1d(x(~outliers), y[:,i][~outliers], fill_value='extrapolate')
+            y[:,i][outliers] = f1(x(outliers))
+        if smooth:
+            window_size = int(fps*3)  # Set the size of the moving window
+            y[:,i] = pd.Series(y[:,i]).rolling(window=window_size, min_periods=1, center=True).mean().values
+    return y

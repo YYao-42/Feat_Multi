@@ -14,86 +14,8 @@ import os
 import argparse
 import vputils
 import pickle
-import copy
-import scipy
-import pandas as pd
-from feutils import object_seg_mmdetection
-from mmdet.apis import init_detector
-from mmdet.utils import register_all_modules
-
-
-def extract_box_info_folder(folder_path, video_dict, args):
-    # Choose to use a config and initialize the detector
-    config_file = 'checkpoints\mask-rcnn_r50-caffe_fpn_ms-poly-3x_coco.py'
-    # Setup a checkpoint file to load
-    checkpoint_file = 'checkpoints\mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth'
-    # register all modules in mmdet into the registries
-    register_all_modules()
-    # build the model from a config file and a checkpoint file
-    net = init_detector(config_file, checkpoint_file, device='cuda:0')  # or device='cuda:0'
-    # create a folder to store the box info
-    box_info_output = 'videos/OVERLAY/box_info/'
-    if not os.path.exists(box_info_output):
-        os.makedirs(box_info_output)
-    # for videos in the video_dict (the keys), check whether the box info file exists
-    # if not, generate the box info file
-    for video in video_dict.keys():
-        video_name = [v for v in os.listdir(folder_path) if v.startswith(video)][0]
-        box_info_path = os.path.join(box_info_output, video + '_box_info_raw.pkl')
-        if not os.path.exists(box_info_path):
-            print('[INFO] Currently generating box info for video: ', video_name)
-            # in the dir folder, search for the video with file name starts with the video ID
-            video_path = os.path.join(folder_path, video_name)
-            box_info, fps, frame_width, frame_height = extract_box_info_video(video_path, net, args)
-            # save box_info, fps, frame_width, frame_height as a dictionary
-            box_info = {'box_info': box_info, 'fps': fps, 'frame_width': frame_width, 'frame_height': frame_height}
-            # save the box info as a pickle file
-            with open(box_info_path, 'wb') as f:
-                pickle.dump(box_info, f)
-        else:
-            print('[INFO] Box info for video: ', video_name, ' already exists!')
-
-
-def extract_box_info_video(video_path, net, args):
-    vs = cv.VideoCapture(video_path)
-    fps = round(vs.get(cv.CAP_PROP_FPS))
-    frame_width = int(vs.get(cv.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(vs.get(cv.CAP_PROP_FRAME_HEIGHT))
-    max_frame = int(fps * args["maxtime"])
-    try:
-        total = min(int(vs.get(cv.CAP_PROP_FRAME_COUNT)), max_frame)
-        print("[INFO] {} total frames in video".format(total))
-    # an error occurred while trying to determine the total
-    # number of frames in the video file
-    except:
-        print("[INFO] could not determine # of frames in video")
-        print("[INFO] no approx. completion time can be provided")
-        total = -1
-    box_list = []
-    frame_count = 0
-    # loop over frames from the video file stream
-    while frame_count < max_frame:
-        # read the next frame from the file
-        grabbed, frame = vs.read()
-        # if the frame was not grabbed, then we have reached the end
-        # of the stream
-        if not grabbed:
-            break
-        # Detect objects 
-        boxes, _, _, elap_OS = object_seg_mmdetection(frame, net, args)
-        if len(boxes) > 1:
-            print('More than one object detected! Only the first one is kept!')
-        if len(boxes) == 0:
-            print('No object detected! Set the box info to NaN!')
-            boxes.append([np.nan, np.nan, np.nan, np.nan])
-        box_list.append(np.expand_dims(np.array(boxes[0]), axis=0))
-        if total > 0:
-            print("[INFO] estimated total time to finish: {:.4f}".format(elap_OS * total))
-            total = -1
-        frame_count += 1
-    box_info = np.concatenate(tuple(box_list), axis=0)
-    vs.release()
-    return box_info, fps, frame_width, frame_height
+from feutils import extract_box_info_folder
+from vputils import clean_boxes_info, expand_boxes
 
 
 def get_weights(nb_frames, change_time, fps, target_weight, ATT, CROPONLY, change_duration_s=2):
@@ -202,6 +124,7 @@ def overlay_two_videos(input_folder, output_folder, pair, MODE, change_time=120,
     if CROPONLY:
         vputils.rescale_480(output_path, os.path.join(output_path[:-4] + '_480.avi'))
 
+
 def add_prepended_content(merged_output, video_name, prepend_output):
     print('Currently prepending content to video: ', video_name)
     frame_width = args["canvaswidth"]
@@ -269,44 +192,6 @@ def concat_videos(prepend_dir, concat_dir, MODE, RANDOMIZE=True):
             out.write(frame)
         cap.release()
     out.release()
-
-
-def expand_boxes(target_height, target_width, ori_height, ori_width, ori_x_start, ori_y_start, ori_frame_height, ori_frame_width):
-    target_height = min(target_height, ori_frame_height)
-    target_width = min(target_width, ori_frame_width)
-    # expand the boxes to the size of the canvas, with the center of the box unchanged
-    new_x_start = int(max(0, ori_x_start - (target_width - ori_width) / 2))
-    new_y_start = int(max(0, ori_y_start - (target_height - ori_height) / 2))
-    new_x_end = min(ori_frame_width, new_x_start + target_width)
-    new_y_end = min(ori_frame_height, new_y_start + target_height)
-    # adjust the start coordinates if the end coordinates are out of the frame
-    new_x_start = new_x_end - target_width
-    new_y_start = new_y_end - target_height
-    assert new_x_start >= 0 and new_y_start >= 0, 'New box out of frame!'
-    new_box_info = [new_x_start, new_y_start, target_width, target_height]
-    center_xy = [new_x_start + target_width / 2, new_y_start + target_height / 2]
-    return new_box_info, center_xy
-
-
-def clean_boxes_info(box_info, fps, smooth=True):
-    y = copy.deepcopy(box_info)
-    _, nb_col = y.shape
-    for i in range(nb_col):
-        # interpolate NaN values (linearly)
-        nans, x= np.isnan(y[:,i]), lambda z: z.nonzero()[0]
-        if any(nans):
-            f1 = scipy.interpolate.interp1d(x(~nans), y[:,i][~nans], fill_value='extrapolate')
-            y[:,i][nans] = f1(x(nans))
-        # find outliers and replace them with interpolated values
-        # outliers are defined as values that are more than 3 standard deviations away from the mean
-        outliers = np.abs(y[:,i] - np.mean(y[:,i])) > 3*np.std(y[:,i])
-        if any(outliers):
-            f1 = scipy.interpolate.interp1d(x(~outliers), y[:,i][~outliers], fill_value='extrapolate')
-            y[:,i][outliers] = f1(x(outliers))
-        if smooth:
-            window_size = int(fps*3)  # Set the size of the moving window
-            y[:,i] = pd.Series(y[:,i]).rolling(window=window_size, min_periods=1, center=True).mean().values
-    return y
 
 
 def boxes_update_pair(v1_box_path, v2_box_path):

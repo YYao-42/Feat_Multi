@@ -4,7 +4,10 @@ import time
 import copy
 import math
 import torch
-from mmdet.apis import inference_detector
+import os
+import pickle
+from mmdet.apis import init_detector, inference_detector
+from mmdet.utils import register_all_modules
 
 
 def cal_rms_contrast(frame_gray, mask=None):
@@ -224,6 +227,80 @@ def object_seg_mmdetection(frame, net, args, FULLMASK=False):
 	end = time.time()
 	elap = end-start
 	return bboxes_list, masks_list, scores_list, elap
+
+
+def extract_box_info_folder(folder_path, video_dict, args):
+    # Choose to use a config and initialize the detector
+    config_file = 'checkpoints\mask-rcnn_r50-caffe_fpn_ms-poly-3x_coco.py'
+    # Setup a checkpoint file to load
+    checkpoint_file = 'checkpoints\mask_rcnn_r50_caffe_fpn_mstrain-poly_3x_coco_bbox_mAP-0.408__segm_mAP-0.37_20200504_163245-42aa3d00.pth'
+    # register all modules in mmdet into the registries
+    register_all_modules()
+    # build the model from a config file and a checkpoint file
+    net = init_detector(config_file, checkpoint_file, device='cuda:0')  # or device='cuda:0'
+    # create a folder to store the box info
+    box_info_output = 'videos/CONFOUND/box_info/'
+    if not os.path.exists(box_info_output):
+        os.makedirs(box_info_output)
+    # for videos in the video_dict (the keys), check whether the box info file exists
+    # if not, generate the box info file
+    for video in video_dict.keys():
+        video_name = [v for v in os.listdir(folder_path) if v.startswith(video)][0]
+        box_info_path = os.path.join(box_info_output, video + '_box_info_raw.pkl')
+        if not os.path.exists(box_info_path):
+            print('[INFO] Currently generating box info for video: ', video_name)
+            # in the dir folder, search for the video with file name starts with the video ID
+            video_path = os.path.join(folder_path, video_name)
+            box_info, fps, frame_width, frame_height = extract_box_info_video(video_path, net, args)
+            # save box_info, fps, frame_width, frame_height as a dictionary
+            box_info = {'box_info': box_info, 'fps': fps, 'frame_width': frame_width, 'frame_height': frame_height}
+            # save the box info as a pickle file
+            with open(box_info_path, 'wb') as f:
+                pickle.dump(box_info, f)
+        else:
+            print('[INFO] Box info for video: ', video_name, ' already exists!')
+
+
+def extract_box_info_video(video_path, net, args):
+    vs = cv.VideoCapture(video_path)
+    fps = round(vs.get(cv.CAP_PROP_FPS))
+    frame_width = int(vs.get(cv.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(vs.get(cv.CAP_PROP_FRAME_HEIGHT))
+    max_frame = int(fps * args["maxtime"])
+    try:
+        total = min(int(vs.get(cv.CAP_PROP_FRAME_COUNT)), max_frame)
+        print("[INFO] {} total frames in video".format(total))
+    # an error occurred while trying to determine the total
+    # number of frames in the video file
+    except:
+        print("[INFO] could not determine # of frames in video")
+        print("[INFO] no approx. completion time can be provided")
+        total = -1
+    box_list = []
+    frame_count = 0
+    # loop over frames from the video file stream
+    while frame_count < max_frame:
+        # read the next frame from the file
+        grabbed, frame = vs.read()
+        # if the frame was not grabbed, then we have reached the end
+        # of the stream
+        if not grabbed:
+            break
+        # Detect objects 
+        boxes, _, _, elap_OS = object_seg_mmdetection(frame, net, args)
+        if len(boxes) > 1:
+            print('More than one object detected! Only the first one is kept!')
+        if len(boxes) == 0:
+            print('No object detected! Set the box info to NaN!')
+            boxes.append([np.nan, np.nan, np.nan, np.nan])
+        box_list.append(np.expand_dims(np.array(boxes[0]), axis=0))
+        if total > 0:
+            print("[INFO] estimated total time to finish: {:.4f}".format(elap_OS * total))
+            total = -1
+        frame_count += 1
+    box_info = np.concatenate(tuple(box_list), axis=0)
+    vs.release()
+    return box_info, fps, frame_width, frame_height
 
 
 def optical_flow_FB(frame, frame_prev):
