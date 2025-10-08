@@ -100,9 +100,10 @@ def baseline_video(input_path, output_path, box_info, target_size, target_std=40
     out.release()
     cv.destroyAllWindows()
 
-def instruction_video(output_path, canvas_width, canvas_height, fps=30, relax_duration=14, instruction_duration=6):
+def instruction_video(output_path, canvas_width, canvas_height, fps=30, relax_duration=14, QR_duration=3, cross_duration=3):
     nb_relax_frames = int(relax_duration * fps)
-    nb_instruction_frames = int(instruction_duration * fps)
+    nb_instruction_frames = int(QR_duration * fps)
+    nb_cross_frames = int(cross_duration * fps)
     fourcc = cv.VideoWriter_fourcc(*'XVID')
     out = cv.VideoWriter(output_path, fourcc, fps, (canvas_width, canvas_height))
     for frame_idx in range(nb_relax_frames):
@@ -114,9 +115,14 @@ def instruction_video(output_path, canvas_width, canvas_height, fps=30, relax_du
         frame = np.zeros((canvas_height, canvas_width, 3), dtype=np.uint8)
         frame = vputils.add_QR_code(frame, 'images/qrcode.png', 100, 100)
         frame = vputils.add_progress_bar(frame, progress=frame_idx/nb_instruction_frames)
-        vputils.addText(frame, 'Please sit still', (950, 300), fontScale=2, thickness=3)
-        vputils.addText(frame, 'Always fixating on the cross', (950, 500), fontScale=2, thickness=3)
-        vputils.addText(frame, 'while attending to the video', (950, 600), fontScale=2, thickness=2)
+        vputils.addText(frame, 'Please sit still', (950, 500), fontScale=2, thickness=3)
+        out.write(frame)
+    for frame_idx in range(nb_cross_frames):
+        frame = np.zeros((canvas_height, canvas_width, 3), dtype=np.uint8)
+        vputils.addText(frame, 'Always fixating on the cross while attending to the video', (100, 300), fontScale=2, thickness=3)
+        frame = vputils.add_fixation_cross(frame, cross_size=60, cross_thickness=5, alpha=0.5)
+        vputils.add_arrow(frame, (canvas_width//2 - 50, canvas_height//2 - 190), (canvas_width//2, canvas_height//2 - 45), thickness=3)
+        frame = vputils.add_progress_bar(frame, progress=frame_idx/nb_cross_frames)
         out.write(frame)
     out.release()
     cv.destroyAllWindows()
@@ -247,7 +253,7 @@ for video_path in video_paths:
     video_id = os.path.basename(video_path)[:2]
     if args['changesize']:
         for scale_factor in scale_factors:
-            output_path = os.path.join(size_output, f"{video_id}_size{int(scale_factor)}.avi")
+            output_path = os.path.join(size_output, f"{video_id}_size{scale_factor}.avi")
             vputils.adjust_video_size_ffmpeg(video_path, output_path, scale_factor=scale_factor)
     if args['changecontrast']:
         for target_std in target_stds:

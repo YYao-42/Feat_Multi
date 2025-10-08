@@ -60,6 +60,10 @@ def add_progress_bar(frame, progress, bar_height=20):
     return frame
 
 
+def add_arrow(frame, start_point, end_point, color=(255,255,255), thickness=5):
+    return cv.arrowedLine(frame, start_point, end_point, color, thickness, tipLength=0.3)
+
+
 def addText(frame, text, pos, color=(255,255,255), font=cv.FONT_HERSHEY_SIMPLEX, fontScale=3, thickness=3):
     return cv.putText(frame, text, pos, font, fontScale, color, thickness, cv.LINE_AA)
 
