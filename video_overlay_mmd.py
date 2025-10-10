@@ -177,7 +177,7 @@ def concat_videos(prepend_dir, concat_dir, MODE, RANDOMIZE=True):
         for video in video_sequence:
             f.write(video + '\n')
     output_path = os.path.join(concat_dir, 'Trial_' + str(MODE + 1) + '.avi') 
-    video_to_concat = [prepend_dir + video for video in video_to_concat]
+    video_to_concat = [os.path.join(prepend_dir, video) for video in video_to_concat]
     frame_width, frame_height, fps = vputils.get_frame_size_and_fps(video_to_concat[0])
     # initialize writer
     fourcc = cv.VideoWriter_fourcc(*'XVID')
@@ -260,17 +260,17 @@ args = vars(ap.parse_args())
 
 
 video_dict = {'01': 'the dancer in a white T-shirt', '13': 'the dancer in a blue shirt',
-              '02': 'the mime actor', '12': 'the magician',
+            #   '02': 'the mime actor', '12': 'the magician',
               '03': 'the acrobat actress on a unicycle', '05': 'the dancer in a black shirt',
               '04': 'the sitting magician', '09': 'the dancer',
               '06': 'the mime actor with a briefcase', '16': 'the mime actor with a hat',
               '07': 'the acrobat actor wearing a vest', '14': 'the sitting mime actress',
               '08': 'the sitting magician', '15': 'the dancer in a red shirt'}
 
-input_folder = rf"C:\Users\Gebruiker\Documents\Experiments\ori_video"
+input_folder = rf"videos\ORI"
 output_folder = rf"C:\Users\Gebruiker\Documents\Experiments\svad_video"
 
-extract_box_info_folder(input_folder, video_dict, args)
+extract_box_info_folder(input_folder, video_dict, args, MODE='OVERLAY')
 
 overlay_output = os.path.join(output_folder, 'pair')
 if not os.path.exists(overlay_output):
