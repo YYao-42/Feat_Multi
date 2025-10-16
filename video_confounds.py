@@ -5,7 +5,7 @@ Baseline: The objects in the videos are cropped based on the bounding boxes. The
 Effects:
     - Size: scale the cropped objects to 40% or 70% of their original width and height
     - Spatial contrast: adjust the contrast of the cropped objects to meet a target std (10, 3)
-    - Speed: change the playback speed of the video (0.75x, 1.5x)
+    - Speed: change the playback speed of the video (0.75x, 1.5x). When the playback speed is slower than 1x, the video becomes longer such that the content is fully played. When the playback speed is faster than 1x, the video is appended with more frames such that the video length is unchanged. These two handling are conflicting, but it is for making sure that we record everything no matter what setting in the data analysis is used.
     - Camera viewpoint: play the video at different viewpoints
         
 Author: yuanyuan.yao@kuleuven.be
@@ -14,6 +14,7 @@ Author: yuanyuan.yao@kuleuven.be
 import numpy as np
 import cv2 as cv
 import os
+import re
 import argparse
 import vputils
 import pickle
@@ -30,7 +31,7 @@ def boxes_update(box_paths, max_len=150):
     h_max_global = 0
     for path in box_paths:
         box_info = pickle.load(open(path, 'rb'))
-        max_nb_samples = max_len * box_info['fps']
+        max_nb_samples = int(max_len * box_info['fps'])
         box_info['box_info'] = box_info['box_info'][:max_nb_samples, :]
         box_info['box_info'] = vputils.clean_boxes_info(box_info['box_info'], box_info["fps"], smooth=True)
         w_max = np.max(box_info['box_info'][:, 2])
@@ -127,7 +128,11 @@ def instruction_video(output_path, canvas_width, canvas_height, fps=30, relax_du
     out.release()
     cv.destroyAllWindows()
 
-def concatenate_videos(output_path, canvas_width, canvas_height, fps=30):
+def concatenate_videos(output_path, canvas_width, canvas_height, fps=30, cutoff_time=None):
+    if cutoff_time is not None:
+        CUTOFF = True
+    else:
+        CUTOFF = False
     # aggregate all the created videos
     video_paths = []
     for folder in [baseline_output, size_output, contrast_output, speed_output]:
@@ -155,11 +160,21 @@ def concatenate_videos(output_path, canvas_width, canvas_height, fps=30):
     fourcc = cv.VideoWriter_fourcc(*'XVID')
     out = cv.VideoWriter(output_path, fourcc, fps, (canvas_width, canvas_height))
     for INS, vp in zip(instruction_flags, video_paths_all):
+        match = re.search(r'speed([0-9]*\.?[0-9]+)', vp)
+        if match:
+            speed_factor = float(match.group(1))
+            if speed_factor < 1.0:
+                cutoff_len = int(cutoff_time * fps / speed_factor)
+            else:
+                cutoff_len = int(cutoff_time * fps)
+        else:
+            cutoff_len = int(cutoff_time * fps)
         cap = cv.VideoCapture(vp)
         if not cap.isOpened():
             print(f"Error: Could not open input video at {vp}")
             continue
         print(f"Processing (concatenate): {vp}")
+        nb_frames = 0
         while True:
             ok, frame_bgr = cap.read()
             if not ok:
@@ -176,6 +191,10 @@ def concatenate_videos(output_path, canvas_width, canvas_height, fps=30):
             else:
                 canvas = frame_bgr
             out.write(canvas)
+            nb_frames += 1
+            if CUTOFF and (nb_frames == cutoff_len):
+                print(f"\nCutoff at {cutoff_time} seconds.")
+                break
         cap.release()
     out.release()
     cv.destroyAllWindows()
@@ -206,6 +225,7 @@ ap.add_argument("-confi", "--confidence", type=float, default=0.5,
 args = vars(ap.parse_args())
 
 input_folder = rf"videos\ORI"
+fps = 30
 output_folder = rf"videos\CONFOUND"
 
 video_dict = {'04': 'magician with poker', '06': 'mime actor with a briefcase', '07': 'acrobat actor wearing a vest',
@@ -227,6 +247,8 @@ speed_factors = [0.75, 1.5]
 if not os.path.exists(speed_output):
     os.makedirs(speed_output)
 
+max_time = args['maxtime'] * max(speed_factors) 
+
 concat_output = os.path.join(output_folder, 'concatenate')
 if not os.path.exists(concat_output):
     os.makedirs(concat_output)
@@ -239,14 +261,14 @@ if not os.path.exists(instruction_path):
 if args['baseline']:
     video_paths = [os.path.join(input_folder, fn) for fn in os.listdir(input_folder) if fn.endswith('.mp4') and fn[:2] in video_dict.keys()]
     # extract box info
-    extract_box_info_folder(input_folder, video_dict, args)
+    extract_box_info_folder(input_folder, video_dict, args, max_frame=int(max_time*fps))
     box_info_folder = os.path.join(output_folder, 'box_info')
     box_paths = [os.path.join(box_info_folder, f"{vn}_box_info_raw.pkl") for vn in video_dict.keys()]
-    box_info_changed, target_size = boxes_update(box_paths, max_len=args['maxtime'])
+    box_info_changed, target_size = boxes_update(box_paths, max_len=max_time)
     for video_path, box_info in zip(video_paths, box_info_changed):
         video_id = os.path.basename(video_path)[:2]
         output_path = os.path.join(baseline_output, f"{video_id}_baseline.avi")
-        baseline_video(video_path, output_path, box_info['box_info'], target_size, target_std=40, max_len=args['maxtime'])
+        baseline_video(video_path, output_path, box_info['box_info'], target_size, target_std=40, max_len=max_time)
 
 video_paths = [os.path.join(baseline_output, fn) for fn in os.listdir(baseline_output) if fn.endswith('.avi') and fn[:2] in video_dict.keys()]
 for video_path in video_paths:
@@ -267,4 +289,4 @@ for video_path in video_paths:
 if args['concatenate']:
     date = datetime.today().strftime('%Y-%m-%d')
     concatenate_path = os.path.join(concat_output, f'concatenate_{date}.avi')
-    concatenate_videos(concatenate_path, args['canvaswidth'], args['canvasheight'])
+    concatenate_videos(concatenate_path, args['canvaswidth'], args['canvasheight'], cutoff_time=args['maxtime'])
