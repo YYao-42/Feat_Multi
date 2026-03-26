@@ -3,9 +3,10 @@ This script is used to create experimental videos for investigating possible con
 Baseline: The objects in the videos are cropped based on the bounding boxes. The spatial contrast is controlled to a target std of 40 (0-255 scale).
 
 Effects:
-    - Speed: change the playback speed of the video (1.25x, 1.5x, 1.75x, 2x).The video is appended with more frames such that the video length is unchanged.
-    - Size: scale the cropped objects to 40% of their original width and height (playback speed = 1.5x).
-    - Spatial contrast: adjust the contrast of the cropped objects to meet a target std = 3 (playback speed = 1.5x).
+    - Size: scale the cropped objects to 40% or 70% of their original width and height
+    - Spatial contrast: adjust the contrast of the cropped objects to meet a target std (10, 3)
+    - Speed: change the playback speed of the video (0.75x, 1.5x). When the playback speed is slower than 1x, the video becomes longer such that the content is fully played. When the playback speed is faster than 1x, the video is appended with more frames such that the video length is unchanged. These two handling are conflicting, but it is for making sure that we record everything no matter what setting in the data analysis is used.
+    - Camera viewpoint: play the video at different viewpoints
         
 Author: yuanyuan.yao@kuleuven.be
 '''
@@ -203,12 +204,12 @@ def concatenate_videos(output_path, canvas_width, canvas_height, fps=30, cutoff_
 ap = argparse.ArgumentParser()
 ap.add_argument('-base', '--baseline', action='store_true',
     help='Create baseline videos with centered objects and controlled spatial contrast')
-ap.add_argument('-csp', '--changespeed', action='store_true',
-    help='Create videos with changed playback speed')
 ap.add_argument('-csize', '--changesize', action='store_true',
     help='Create videos with changed object sizes')
 ap.add_argument('-cct', '--changecontrast', action='store_true',
     help='Create videos with changed spatial contrast')
+ap.add_argument('-csp', '--changespeed', action='store_true',
+    help='Create videos with changed playback speed')
 ap.add_argument('-concat', '--concatenate', action='store_true',
     help='Concatenate videos under different conditions')
 ap.add_argument("-dl", "--detectlabel", type=int, default=0,
@@ -234,15 +235,15 @@ baseline_output = os.path.join(output_folder, 'baseline')
 if not os.path.exists(baseline_output):
     os.makedirs(baseline_output)
 size_output = os.path.join(output_folder, 'size')
-scale_factors = [0.4]
+scale_factors = [0.4, 0.7]
 if not os.path.exists(size_output):
     os.makedirs(size_output)
 contrast_output = os.path.join(output_folder, 'contrast')
-target_stds = [3]
+target_stds = [3, 10]
 if not os.path.exists(contrast_output):
     os.makedirs(contrast_output)
 speed_output = os.path.join(output_folder, 'speed')
-speed_factors = [1.25, 1.5, 1.75, 2]
+speed_factors = [0.75, 1.5]
 if not os.path.exists(speed_output):
     os.makedirs(speed_output)
 
@@ -260,7 +261,7 @@ if not os.path.exists(instruction_path):
 if args['baseline']:
     video_paths = [os.path.join(input_folder, fn) for fn in os.listdir(input_folder) if fn.endswith('.mp4') and fn[:2] in video_dict.keys()]
     # extract box info
-    extract_box_info_folder(input_folder, video_dict, args, max_frame=None)
+    extract_box_info_folder(input_folder, video_dict, args, max_frame=int(max_time*fps))
     box_info_folder = os.path.join(output_folder, 'box_info')
     box_paths = [os.path.join(box_info_folder, f"{vn}_box_info_raw.pkl") for vn in video_dict.keys()]
     box_info_changed, target_size = boxes_update(box_paths, max_len=max_time)
@@ -269,25 +270,21 @@ if args['baseline']:
         output_path = os.path.join(baseline_output, f"{video_id}_baseline.avi")
         baseline_video(video_path, output_path, box_info['box_info'], target_size, target_std=40, max_len=max_time)
 
-if args['changespeed']:
-    video_paths = [os.path.join(baseline_output, fn) for fn in os.listdir(baseline_output) if fn.endswith('.avi') and fn[:2] in video_dict.keys()]
-    for video_path in video_paths:
-        video_id = os.path.basename(video_path)[:2]
-        for speed in speed_factors:
-            output_path = os.path.join(speed_output, f"{video_id}_speed{speed}.avi")
-            vputils.adjust_video_speed_ffmpeg(video_path, output_path, speed=speed)
-video_paths = [os.path.join(speed_output, fn) for fn in os.listdir(speed_output) if fn.endswith('.avi') and fn[:2] in video_dict.keys() and 'speed1.5' in fn]
+video_paths = [os.path.join(baseline_output, fn) for fn in os.listdir(baseline_output) if fn.endswith('.avi') and fn[:2] in video_dict.keys()]
 for video_path in video_paths:
     video_id = os.path.basename(video_path)[:2]
     if args['changesize']:
         for scale_factor in scale_factors:
-            output_path = os.path.join(size_output, f"{video_id}_1.5x_size{scale_factor}.avi")
+            output_path = os.path.join(size_output, f"{video_id}_size{scale_factor}.avi")
             vputils.adjust_video_size_ffmpeg(video_path, output_path, scale_factor=scale_factor)
     if args['changecontrast']:
         for target_std in target_stds:
-            output_path = os.path.join(contrast_output, f"{video_id}_1.5x_std{target_std}.avi")
-            vputils.adjust_video_contrast_yuv(video_path, output_path, target_std=target_std, max_len=args['maxtime'])
-
+            output_path = os.path.join(contrast_output, f"{video_id}_std{target_std}.avi")
+            vputils.adjust_video_contrast_yuv(video_path, output_path, target_std=target_std)
+    if args['changespeed']:
+        for speed in speed_factors:
+            output_path = os.path.join(speed_output, f"{video_id}_speed{speed}.avi")
+            vputils.adjust_video_speed_ffmpeg(video_path, output_path, speed=speed)
 
 if args['concatenate']:
     date = datetime.today().strftime('%Y-%m-%d')
