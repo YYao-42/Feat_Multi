@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pickle
 import cv2 as cv
+import copy
 import os
 from pyzbar.pyzbar import decode
 from vputils import get_frame_size_and_fps, get_nb_prepend_frames
@@ -102,25 +103,75 @@ def find_edge(QR_results, UP=True):
     return sorted(data_cleaned_idx)
 
 
-def show_surrounding_frames(video_path, frame_idx, title):
+def show_surrounding_frames(video_path, frame_idx, title, nb_surrounding_frames=20):
     vid = cv.VideoCapture(video_path)
-    figure, ax = plt.subplots(2, 5, sharey=True)
-    for x in range(2):
-        for y in range(5):
-            frame_nb = frame_idx + x*5 + y - 4 
-            vid.set(cv.CAP_PROP_POS_FRAMES, frame_nb)
-            _, frame = vid.read()
-            ax[x,y].imshow(frame)
-            ax[x,y].axis('off')
-            if x*5 + y == 4:
-                ax[x,y].set_title(str(frame_nb), color='red')
+    # a square of frames with the given frame in the middle, and the number of surrounding frames on each side is nb_surrounding_frames//2
+    frame_indices = list(range(max(0, frame_idx - nb_surrounding_frames//2), frame_idx)) + \
+                    list(range(frame_idx, min(int(vid.get(cv.CAP_PROP_FRAME_COUNT)), frame_idx + nb_surrounding_frames//2)))
+    nb_frames = len(frame_indices)
+    nb_cols = int(np.ceil(nb_frames/5))
+    nb_rows = int(np.ceil(nb_frames/nb_cols))
+    figure, ax = plt.subplots(nb_rows, nb_cols, sharey=True)
+    for i, idx in enumerate(frame_indices):
+        vid.set(cv.CAP_PROP_POS_FRAMES, idx)
+        ret, frame = vid.read()
+        if ret:
+            row_idx = i // nb_cols
+            col_idx = i % nb_cols
+            ax[row_idx, col_idx].imshow(cv.cvtColor(frame, cv.COLOR_BGR2RGB))
+            if idx == frame_idx:
+                ax[row_idx, col_idx].set_title(f'Frame {idx} (current frame)', color='red')
             else:
-                ax[x,y].set_title(str(frame_nb))
+                ax[row_idx, col_idx].set_title(f'Frame {idx}')
+            ax[row_idx, col_idx].axis('off')
     figure.tight_layout()
     figure.suptitle(title)
     plt.show()
     return
     
+
+def infer_start_from_video_len(start_idx, end_idx, video_sequence, fs_ori):
+    '''
+    Infer the start timings based on the video length. Each video segment contains two videos, so there should be nb_videos/2 timings inferred from the QR code detection results, and the other nb_videos/2 timings inferred based on the length of each video.
+    '''
+    nb_videos = len(video_sequence)
+    start_inferred = [start_idx[0]]
+    end_inferred = [end_idx[0]]
+    start_current = start_idx[0]
+    end_current = end_idx[0]
+    for i in range(nb_videos//2-1):
+        video_1 = video_sequence[2*i]
+        video_2 = video_sequence[2*i+1]
+        start_next = start_current + (get_video_len(video_1) + get_video_len(video_2) + 20) * fs_ori
+        end_next = end_current + (get_video_len(video_1) + get_video_len(video_2) + 20) * fs_ori
+        if any(np.abs(start_next - np.array(start_idx)) < 5*fs_ori):
+            # find the closest element in start_idx to start_next, and replace start_next with that element
+            start_next = start_idx[np.argmin(np.abs(start_next - np.array(start_idx)))]
+        if any(np.abs(end_next - np.array(end_idx)) < 5*fs_ori):
+            # find the closest element in end_idx to end_next, and replace end_next with that element
+            end_next = end_idx[np.argmin(np.abs(end_next - np.array(end_idx)))]
+        start_inferred.append(start_next)
+        end_inferred.append(end_next)
+        start_current = start_next
+        end_current = end_next
+    return start_inferred, end_inferred
+
+
+def refine_start_end(QR_results, video_sequence, fs_ori):
+    start_idx = find_edge(QR_results, UP=True)
+    end_idx = find_edge(QR_results, UP=False)
+    # remove elments in both start_idx and end_idx
+    start_idx_update = [x for x in start_idx if x not in end_idx]
+    end_idx = [x for x in end_idx if x not in start_idx]
+    start_idx = start_idx_update
+    if len(start_idx) == len(end_idx) == nb_videos//2:
+        print('The number of start and end timings is consistent with the number of videos!')
+    else:
+        print('The number of start and end timings is not consistent with the number of videos!')
+        print('Infer the start and end timings based on the video length.')
+        start_idx, end_idx = infer_start_from_video_len(start_idx, end_idx, video_sequence, fs_ori)
+    return start_idx, end_idx
+
 
 def get_starts(QR_results, video_sequence, path_visual_QR, fs_ori):
     '''
@@ -130,16 +181,10 @@ def get_starts(QR_results, video_sequence, path_visual_QR, fs_ori):
     Each video segment contains two videos, so there should be nb_videos/2 start timings inferred from the QR code detection results, and the other nb_videos/2 timings inferred based on the length of each video.
     '''
     time_ms = np.array(QR_results['timestamps'])
-    start_idx = find_edge(QR_results, UP=True)
-    end_idx = find_edge(QR_results, UP=False)
-    # remove elments in both start_idx and end_idx
-    start_idx_update = [x for x in start_idx if x not in end_idx]
-    end_idx = [x for x in end_idx if x not in start_idx]
-    start_idx = start_idx_update
+    start_idx, end_idx = refine_start_end(QR_results, video_sequence, fs_ori)
     video_starts = {}
-    assert len(start_idx) == len(end_idx) == nb_videos//2, "The number of start and end timings should be the same as the number of videos!"
     # check whether the distance between the start and end matches the number of the prepended frames
-    for i in range(nb_videos//2):        
+    for i in range(nb_videos//2):
         video_1 = video_sequence[2*i]
         video_2 = video_sequence[2*i+1]
         print("Synchronizing videos: ", video_1, " and ", video_2)
@@ -282,12 +327,13 @@ def visual_gaze(visual_video_path, ori_video_path, fps_ori, width_ori, height_or
 
 if __name__ == "__main__":
 
-    Pilot_Name = 'Pilot_1'
+    Pilot_Name = 'Pilot_8'
     REGENERATE = False
     fs_ori = 30
-    path_raw = 'data/' + Pilot_Name + '/Raw/'
-    path_map = 'data/' + Pilot_Name + '/Marker_Mapper/'
-    path_sequence_file = 'data/' + Pilot_Name + '/video_order.txt'
+    path_raw = 'data/Confound/' + Pilot_Name + '/Raw/'
+    path_map = 'data/Confound/' + Pilot_Name + '/Marker_Mapper/'
+    path_sequence_file = rf'videos\CONFOUND\concatenate\video_order_2026-01-19.txt'
+    ori_video_path = rf'videos\CONFOUND\concatenate\concatenate_2026-01-19.avi'
     video_sequence = get_video_sequence(path_sequence_file)
     nb_videos = len(video_sequence)
  
@@ -325,7 +371,6 @@ if __name__ == "__main__":
     
     for video in video_sequence:
         video_start_idx = video_starts[video]
-        ori_video_path = f'videos\CONFOUND\concatenate\concatenate_2025-10-09.avi'
         width_ori, height_ori, _ = get_frame_size_and_fps(ori_video_path)
         gaze_path = path_raw + video[:-4] + '_gaze.npy'
         # check if the file exists
@@ -333,8 +378,8 @@ if __name__ == "__main__":
             print('The gaze file already exists!')
         else:
             get_gaze(gaze_path, video, fs_ori, width_ori, height_ori, video_start_idx, time_array, gaze_points, fixation_points, blink_points, magic_ratio=1.77/1.12)
-    visual_video_path = path_raw + folder_name + '/gaze.mp4'
-    visual_gaze(visual_video_path, ori_video_path, fs_ori, width_ori, height_ori, video_sequence)
+    # visual_video_path = path_raw + folder_name + '/gaze.mp4'
+    # visual_gaze(visual_video_path, ori_video_path, fs_ori, width_ori, height_ori, video_sequence)
 
     
 
