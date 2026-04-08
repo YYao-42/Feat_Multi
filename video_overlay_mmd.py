@@ -80,7 +80,10 @@ def overlay_two_videos(input_folder, output_folder, pair, MODE, change_time=120,
         v2_weights = get_weights(nb_frames, change_time, fps2, w2, ATT=True, CROPONLY=CROPONLY, change_duration_s=2)
     # create an output video writer (avi)
     fourcc = cv.VideoWriter_fourcc(*'XVID')
-    out = cv.VideoWriter(output_path, fourcc, fps1, (frame_width1, frame_height1))
+    if not CROPONLY:
+        out = cv.VideoWriter(output_path, fourcc, fps1, (frame_width1, frame_height1))
+    else:
+        out = cv.VideoWriter(output_path, fourcc, fps1, (target_size[0], target_size[1]))
     frame_count = 0
     while frame_count < nb_frames:
         # Read frames from the two videos
@@ -100,7 +103,7 @@ def overlay_two_videos(input_folder, output_folder, pair, MODE, change_time=120,
         # change the data type of the frame to uint8
         frame_overlaid = frame_overlaid.astype(np.uint8)
         # if the size of frame_ori does not match the target size, put the video in the center of the canvas
-        if frame_overlaid.shape[0] != frame_height1 or frame_overlaid.shape[1] != frame_width1:
+        if (frame_overlaid.shape[0] != frame_height1 or frame_overlaid.shape[1] != frame_width1) and not CROPONLY:
             frame = np.zeros((frame_height1, frame_width1, 3), dtype=np.uint8)
             x_start = int((frame_width1 - frame_overlaid.shape[1]) / 2)
             y_start = int((frame_height1 - frame_overlaid.shape[0]) / 2)
@@ -121,8 +124,8 @@ def overlay_two_videos(input_folder, output_folder, pair, MODE, change_time=120,
     cap1.release()
     cap2.release()
     out.release()
-    if CROPONLY:
-        vputils.rescale_480(output_path, os.path.join(output_path[:-4] + '_480.avi'))
+    # if CROPONLY:
+    #     vputils.rescale_480(output_path, os.path.join(output_path[:-4] + '_480.avi'))
 
 
 def add_prepended_content(merged_output, video_name, prepend_output):
@@ -260,7 +263,7 @@ args = vars(ap.parse_args())
 
 
 video_dict = {'01': 'the dancer in a white T-shirt', '13': 'the dancer in a blue shirt',
-            #   '02': 'the mime actor', '12': 'the magician',
+              '02': 'the mime actor', '12': 'the magician',
               '03': 'the acrobat actress on a unicycle', '05': 'the dancer in a black shirt',
               '04': 'the sitting magician', '09': 'the dancer',
               '06': 'the mime actor with a briefcase', '16': 'the mime actor with a hat',
@@ -268,7 +271,8 @@ video_dict = {'01': 'the dancer in a white T-shirt', '13': 'the dancer in a blue
               '08': 'the sitting magician', '15': 'the dancer in a red shirt'}
 
 input_folder = rf"videos\ORI"
-output_folder = rf"C:\Users\Gebruiker\Documents\Experiments\svad_video"
+# output_folder = rf"C:\Users\Gebruiker\Documents\Experiments\svad_video"
+output_folder = rf"videos\OVERLAY"
 
 extract_box_info_folder(input_folder, video_dict, args, MODE='OVERLAY')
 

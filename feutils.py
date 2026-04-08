@@ -229,7 +229,7 @@ def object_seg_mmdetection(frame, net, args, FULLMASK=False):
 	return bboxes_list, masks_list, scores_list, elap
 
 
-def extract_box_info_folder(folder_path, video_dict, args, max_frame=None, MODE='CONFOUND'):
+def extract_box_info_folder(folder_path, video_dict, args, max_frame=None, MODE='OVERLAY'):
     # Choose to use a config and initialize the detector
     config_file = 'checkpoints\mask-rcnn_r50-caffe_fpn_ms-poly-3x_coco.py'
     # Setup a checkpoint file to load
