@@ -20,6 +20,7 @@ import copy
 import os
 from pyzbar.pyzbar import decode
 from vputils import get_frame_size_and_fps, get_nb_prepend_frames
+from collections import deque
 
 
 def detect_QR_code_pyzbar(frame):
@@ -43,6 +44,76 @@ def detect_QR_code_pyzbar(frame):
             cv.putText(frame, code_info, (int(code_points[0].x), int(code_points[0].y - 10)),
                         cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     return frame, ifdetected
+
+
+def find_exact_QR_boundaries(test_video_path, skip_rate=10):
+    '''
+    Finds exact start and end frames of QR codes using a rolling buffer 
+    and full-resolution frames.
+    '''
+    cap = cv.VideoCapture(test_video_path)
+    if not cap.isOpened():
+        print("Cannot open file")
+        return None
+
+    # A rolling buffer that only remembers the last 'skip_rate' frames
+    buffer = deque(maxlen=skip_rate)
+    QR_detected_full = [] # We will backfill this so it contains a True/False for EVERY frame
+    timestamps = []
+    current_state = False
+    frame_idx = 0
+    print("Scanning video for exact boundaries...")
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        timestamp = cap.get(cv.CAP_PROP_POS_MSEC)
+        timestamps.append(timestamp)
+        # Save frame and its index to the buffer
+        buffer.append((frame_idx, frame))
+        # Only run heavy pyzbar detection every Nth frame
+        if frame_idx % skip_rate == 0:
+            _, ifdetected = detect_QR_code_pyzbar(frame)
+            # Did the state change from False -> True (Appearance) 
+            # or True -> False (Disappearance)?
+            if ifdetected != current_state:
+                print(f"State flip detected near frame {frame_idx}. Finding exact frame...")
+                # We know the flip happened somewhere inside our buffer.
+                # Let's check them one by one chronologically.
+                exact_flip_idx = None
+                
+                for buf_idx, buf_frame in buffer:
+                    _, buf_detected = detect_QR_code_pyzbar(buf_frame)      
+                    if buf_detected != current_state:
+                        # We found the exact boundary frame!
+                        exact_flip_idx = buf_idx
+                        current_state = buf_detected # Update the main state
+                        break
+                # Backfill the results array so we have data for every single frame
+                # From the start of the buffer up to the exact flip: old state
+                # From the exact flip to the current frame: new state
+                for buf_idx, _ in buffer:
+                    if buf_idx >= len(QR_detected_full): # Avoid double counting
+                        if exact_flip_idx is not None and buf_idx >= exact_flip_idx:
+                            QR_detected_full.append(current_state)
+                        else:
+                            # State before the flip
+                            QR_detected_full.append(not current_state)
+            else:
+                # No state change, just backfill the buffer with the current state
+                for buf_idx, _ in buffer:
+                    if buf_idx >= len(QR_detected_full):
+                        QR_detected_full.append(current_state)
+        frame_idx += 1
+    cap.release()
+
+    # Backfill any trailing frames that were not covered by the last skip_rate-aligned check
+    while len(QR_detected_full) < len(timestamps):
+        QR_detected_full.append(current_state)
+
+    # Return in the exact same dictionary format your existing code expects
+    QR_result = {'QR_detected': QR_detected_full, 'timestamps': timestamps}
+    return QR_result
 
 
 def visual_QR_codes(visual_video_path, test_video_path, index_path, fps, width, height):
@@ -103,18 +174,31 @@ def find_edge(QR_results, UP=True):
     return sorted(data_cleaned_idx)
 
 
-def show_surrounding_frames(video_path, frame_idx, title, nb_surrounding_frames=20):
-    vid = cv.VideoCapture(video_path)
-    # a square of frames with the given frame in the middle, and the number of surrounding frames on each side is nb_surrounding_frames//2
-    frame_indices = list(range(max(0, frame_idx - nb_surrounding_frames//2), frame_idx)) + \
-                    list(range(frame_idx, min(int(vid.get(cv.CAP_PROP_FRAME_COUNT)), frame_idx + nb_surrounding_frames//2)))
+def show_surrounding_frames(vid, current_pos, frame_idx, title, nb_surrounding_frames=20):
+    '''
+    vid: an already-opened cv.VideoCapture, read sequentially from the start.
+    current_pos: the frame index that vid will read next.
+    Returns the updated current_pos after reading.
+    '''
+    first_frame = max(0, frame_idx - nb_surrounding_frames//2)
+    last_frame = min(int(vid.get(cv.CAP_PROP_FRAME_COUNT)), frame_idx + nb_surrounding_frames//2)
+    frame_indices = list(range(first_frame, last_frame))
     nb_frames = len(frame_indices)
     nb_cols = int(np.ceil(nb_frames/5))
     nb_rows = int(np.ceil(nb_frames/nb_cols))
     figure, ax = plt.subplots(nb_rows, nb_cols, sharey=True)
+    # Skip forward sequentially to first_frame to guarantee exact frame alignment.
+    # Seeking (CAP_PROP_POS_FRAMES) can land on a nearby keyframe instead of
+    # the requested frame, which would cause the displayed frames to not match
+    # their labeled indices — misleading the user into wrong adjustments.
+    while current_pos < first_frame:
+        ret = vid.grab()
+        if not ret:
+            break
+        current_pos += 1
     for i, idx in enumerate(frame_indices):
-        vid.set(cv.CAP_PROP_POS_FRAMES, idx)
         ret, frame = vid.read()
+        current_pos += 1
         if ret:
             row_idx = i // nb_cols
             col_idx = i % nb_cols
@@ -127,7 +211,7 @@ def show_surrounding_frames(video_path, frame_idx, title, nb_surrounding_frames=
     figure.tight_layout()
     figure.suptitle(title)
     plt.show()
-    return
+    return current_pos
     
 
 def infer_start_from_video_len(start_idx, end_idx, video_sequence, fs_ori):
@@ -183,6 +267,9 @@ def get_starts(QR_results, video_sequence, path_visual_QR, fs_ori):
     time_ms = np.array(QR_results['timestamps'])
     start_idx, end_idx = refine_start_end(QR_results, video_sequence, fs_ori)
     video_starts = {}
+    # Open the video once and read sequentially across all calls
+    vid = cv.VideoCapture(path_visual_QR)
+    current_pos = 0
     # check whether the distance between the start and end matches the number of the prepended frames
     for i in range(nb_videos//2):
         video_1 = video_sequence[2*i]
@@ -195,8 +282,8 @@ def get_starts(QR_results, video_sequence, path_visual_QR, fs_ori):
         print('Do you want to adjust the start and end timings?')
         print('If yes, please input the new start and end timings (format: start_idx,end_idx)')
         print('If no, please input "no"')
-        show_surrounding_frames(path_visual_QR, start_idx[i], 'Starting Frames')
-        show_surrounding_frames(path_visual_QR, end_idx[i], 'Ending Frames')
+        current_pos = show_surrounding_frames(vid, current_pos, start_idx[i], 'Starting Frames')
+        current_pos = show_surrounding_frames(vid, current_pos, end_idx[i], 'Ending Frames')
         user_input = input()
         if user_input != 'no':
             start_idx[i], end_idx[i] = tuple(map(int, user_input.split(',')))
@@ -207,6 +294,7 @@ def get_starts(QR_results, video_sequence, path_visual_QR, fs_ori):
         start_v2 = end_idx[i] + (3 + get_video_len(video_1)) * fs_ori + 1
         video_starts[video_1] = start_v1
         video_starts[video_2] = start_v2
+    vid.release()
     # Save the start timings with key as the video name
     np.save(path_raw + folder_name + '/video_starts.npy', video_starts)
     return video_starts
@@ -327,13 +415,13 @@ def visual_gaze(visual_video_path, ori_video_path, fps_ori, width_ori, height_or
 
 if __name__ == "__main__":
 
-    Pilot_Name = 'Pilot_8'
+    Pilot_Name = 'Pilot_11'
     REGENERATE = False
     fs_ori = 30
     path_raw = 'data/Confound/' + Pilot_Name + '/Raw/'
     path_map = 'data/Confound/' + Pilot_Name + '/Marker_Mapper/'
-    path_sequence_file = rf'videos\CONFOUND\concatenate\video_order_2026-01-19.txt'
-    ori_video_path = rf'videos\CONFOUND\concatenate\concatenate_2026-01-19.avi'
+    path_sequence_file = rf'videos\CONFOUND\concatenate\video_order_2026-03-09.txt'
+    ori_video_path = rf'videos\CONFOUND\concatenate\concatenate_2026-03-09.avi'
     video_sequence = get_video_sequence(path_sequence_file)
     nb_videos = len(video_sequence)
  
@@ -362,12 +450,15 @@ if __name__ == "__main__":
             QR_result = pickle.load(f)
     else:
         width_scene, height_scene, fps_scene = get_frame_size_and_fps(path_scene_video)
-        QR_result = visual_QR_codes(path_visual_QR, path_scene_video, path_index, fps_scene, width_scene, height_scene)
+        # QR_result = visual_QR_codes(path_visual_QR, path_scene_video, path_index, fps_scene, width_scene, height_scene)
+        QR_result = find_exact_QR_boundaries(path_scene_video, skip_rate=30)
+        with open(path_index, 'wb') as f:
+            pickle.dump(QR_result, f)
     # Find the start and end timings
     if os.path.exists(path_raw + folder_name + '/video_starts.npy'):
         video_starts = np.load(path_raw + folder_name + '/video_starts.npy', allow_pickle=True).item()
     else:
-        video_starts = get_starts(QR_result, video_sequence, path_visual_QR, fs_ori=fs_ori)
+        video_starts = get_starts(QR_result, video_sequence, path_scene_video, fs_ori=fs_ori)
     
     for video in video_sequence:
         video_start_idx = video_starts[video]
